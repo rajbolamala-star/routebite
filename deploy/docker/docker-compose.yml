@@ -1,0 +1,13 @@
+version: '3.9'
+
+services:
+  routebite:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - YELP_API_KEY=${YELP_API_KEY:-}
+      - USE_MOCK_ROUTING=${USE_MOCK_ROUTING:-true}

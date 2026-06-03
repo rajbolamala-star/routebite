@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: routebite
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: routebite-secrets
+  namespace: routebite
+type: Opaque
+stringData:
+  yelp-api-key: "REPLACE_ME"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: routebite
+  namespace: routebite
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: routebite
+  template:
+    metadata:
+      labels:
+        app: routebite
+    spec:
+      containers:
+        - name: app
+          image: routebite:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: YELP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: routebite-secrets
+                  key: yelp-api-key
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: routebite
+  namespace: routebite
+spec:
+  selector:
+    app: routebite
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: routebite-hpa
+  namespace: routebite
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: routebite
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
