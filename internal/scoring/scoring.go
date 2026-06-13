@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dheerajb/routebite/internal/api"
 	"github.com/dheerajb/routebite/internal/routing"
 	"github.com/dheerajb/routebite/internal/yelp"
 )
@@ -27,6 +26,30 @@ var Default = Weights{
 	OpenBonus:   0.1,
 }
 
+// LatLng is a geographic coordinate in API-ready JSON form.
+type LatLng struct {
+	Lat float64 `json:"lat"`
+	Lng float64 `json:"lng"`
+}
+
+// Restaurant is one ranked result returned by the scoring engine.
+type Restaurant struct {
+	Name               string   `json:"name"`
+	Rating             float64  `json:"rating"`
+	ReviewCount        int      `json:"review_count"`
+	Phone              string   `json:"phone"`
+	CallLink           string   `json:"call_link"` // tel:+1...
+	YelpURL            string   `json:"yelp_url"`
+	Address            string   `json:"address"`
+	Location           LatLng   `json:"location"`
+	DistanceFromRouteM int      `json:"distance_from_route_m"`
+	ExtraMinutes       int      `json:"extra_minutes"`
+	Cuisine            []string `json:"cuisine"`
+	Price              string   `json:"price"` // "$", "$$", "$$$"
+	IsOpenNow          bool     `json:"is_open_now"`
+	Score              float64  `json:"score"` // 0.0 - 1.0
+}
+
 // Rank converts Yelp businesses into ranked API restaurants, applying detour
 // math against the route polyline.
 //
@@ -39,7 +62,7 @@ func Rank(
 	maxDetourMin int,
 	maxResults int,
 	w Weights,
-) []api.Restaurant {
+) []Restaurant {
 	if maxResults <= 0 {
 		maxResults = 5
 	}
@@ -47,7 +70,7 @@ func Rank(
 		maxDetourMin = 10
 	}
 
-	out := make([]api.Restaurant, 0, len(bs))
+	out := make([]Restaurant, 0, len(bs))
 	for _, b := range bs {
 		if b.IsClosed {
 			continue
@@ -100,7 +123,7 @@ func compute(b yelp.Business, extraMin int, w Weights) float64 {
 		openBonus*w.OpenBonus
 }
 
-func toRestaurant(b yelp.Business, p routing.Point, distM int, extraMin int, score float64) api.Restaurant {
+func toRestaurant(b yelp.Business, p routing.Point, distM int, extraMin int, score float64) Restaurant {
 	cuisines := make([]string, 0, len(b.Categories))
 	for _, c := range b.Categories {
 		cuisines = append(cuisines, c.Title)
@@ -119,7 +142,7 @@ func toRestaurant(b yelp.Business, p routing.Point, distM int, extraMin int, sco
 		callLink = "tel:" + phone
 	}
 
-	return api.Restaurant{
+	return Restaurant{
 		Name:               b.Name,
 		Rating:             b.Rating,
 		ReviewCount:        b.ReviewCount,
@@ -127,7 +150,7 @@ func toRestaurant(b yelp.Business, p routing.Point, distM int, extraMin int, sco
 		CallLink:           callLink,
 		YelpURL:            b.URL,
 		Address:            addr,
-		Location:           api.LatLng{Lat: p.Lat, Lng: p.Lng},
+		Location:           LatLng{Lat: p.Lat, Lng: p.Lng},
 		DistanceFromRouteM: distM,
 		ExtraMinutes:       extraMin,
 		Cuisine:            cuisines,
@@ -139,7 +162,7 @@ func toRestaurant(b yelp.Business, p routing.Point, distM int, extraMin int, sco
 
 // VoiceSummary builds the one-line spoken response. Empty results get a
 // helpful fallback rather than an awkward "0 results found."
-func VoiceSummary(results []api.Restaurant, query string) string {
+func VoiceSummary(results []Restaurant, query string) string {
 	if len(results) == 0 {
 		if query != "" {
 			return fmt.Sprintf("No %s spots within your detour limit. Want me to expand the search?", query)

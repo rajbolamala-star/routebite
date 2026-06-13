@@ -120,6 +120,24 @@ make docker-up
 ./scripts/smoke-test.sh
 ```
 
+## Web app prototype
+
+The Go server also serves a mobile-first prototype at:
+
+```text
+http://localhost:8080/
+```
+
+Run it locally with mock providers:
+
+```bash
+make run
+```
+
+The prototype lets you pick a sample route, enter or speak a food request,
+review ranked pickup options, call the restaurant, open navigation, and hear the
+one-line voice summary.
+
 ## What this project demonstrates
 
 - Real-world problem → focused API design

@@ -51,6 +51,11 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery(), middleware.StructuredLogger())
 
+	r.Static("/web", "./web")
+	r.GET("/", func(c *gin.Context) {
+		c.File("./web/index.html")
+	})
+
 	v1 := r.Group("/v1")
 	{
 		v1.POST("/search", h.Search)
