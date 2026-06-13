@@ -17,7 +17,7 @@ import {
   Utensils,
   Volume2,
 } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 type Point = {
   lat: number;
@@ -55,6 +55,15 @@ type SearchResponse = {
   };
   results: Restaurant[];
   voice_summary: string;
+};
+
+type GeocodeSuggestion = {
+  label: string;
+  point: Point;
+};
+
+type GeocodeResponse = {
+  results: GeocodeSuggestion[];
 };
 
 type SpeechRecognitionConstructor = new () => SpeechRecognition;
@@ -128,10 +137,23 @@ function getSpeechRecognition(): SpeechRecognitionConstructor | null {
   return speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition || null;
 }
 
+async function fetchGeocodeSuggestions(query: string, limit = 4): Promise<GeocodeSuggestion[]> {
+  const res = await fetch(`/v1/geocode?q=${encodeURIComponent(query)}&limit=${limit}`);
+  const data = (await res.json()) as GeocodeResponse & { error?: string };
+  if (!res.ok) {
+    throw new Error(data.error || "Could not load route suggestions.");
+  }
+  return data.results || [];
+}
+
 export default function Home() {
   const [activeRouteKey, setActiveRouteKey] = useState("miami-sunrise");
   const [originLabel, setOriginLabel] = useState(routePresets["miami-sunrise"].originLabel);
   const [destinationLabel, setDestinationLabel] = useState(routePresets["miami-sunrise"].destinationLabel);
+  const [originPoint, setOriginPoint] = useState(routePresets["miami-sunrise"].origin);
+  const [destinationPoint, setDestinationPoint] = useState(routePresets["miami-sunrise"].destination);
+  const [originResolvedLabel, setOriginResolvedLabel] = useState(routePresets["miami-sunrise"].originLabel);
+  const [destinationResolvedLabel, setDestinationResolvedLabel] = useState(routePresets["miami-sunrise"].destinationLabel);
   const [voiceText, setVoiceText] = useState("find me soup along the way");
   const [maxDetour, setMaxDetour] = useState(10);
   const [maxResults, setMaxResults] = useState(5);
@@ -139,34 +161,121 @@ export default function Home() {
   const [status, setStatus] = useState("API ready");
   const [response, setResponse] = useState<SearchResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isResolvingRoute, setIsResolvingRoute] = useState(false);
+  const [originSuggestions, setOriginSuggestions] = useState<GeocodeSuggestion[]>([]);
+  const [destinationSuggestions, setDestinationSuggestions] = useState<GeocodeSuggestion[]>([]);
+  const [activeSuggestionField, setActiveSuggestionField] = useState<"origin" | "destination" | null>(null);
 
-  const activeRoute = useMemo(() => routePresets[activeRouteKey], [activeRouteKey]);
   const summary = response?.voice_summary || "Ready for your first search";
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      const query = originLabel.trim();
+      if (query.length < 2 || activeSuggestionField !== "origin") {
+        setOriginSuggestions([]);
+        return;
+      }
+      void fetchGeocodeSuggestions(query).then(setOriginSuggestions).catch(() => setOriginSuggestions([]));
+    }, 260);
+    return () => window.clearTimeout(timeout);
+  }, [originLabel, activeSuggestionField]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      const query = destinationLabel.trim();
+      if (query.length < 2 || activeSuggestionField !== "destination") {
+        setDestinationSuggestions([]);
+        return;
+      }
+      void fetchGeocodeSuggestions(query).then(setDestinationSuggestions).catch(() => setDestinationSuggestions([]));
+    }, 260);
+    return () => window.clearTimeout(timeout);
+  }, [destinationLabel, activeSuggestionField]);
 
   function selectRoute(key: string) {
     const nextRoute = routePresets[key];
     setActiveRouteKey(key);
     setOriginLabel(nextRoute.originLabel);
     setDestinationLabel(nextRoute.destinationLabel);
+    setOriginPoint(nextRoute.origin);
+    setDestinationPoint(nextRoute.destination);
+    setOriginResolvedLabel(nextRoute.originLabel);
+    setDestinationResolvedLabel(nextRoute.destinationLabel);
   }
 
   function swapRoute() {
+    setActiveRouteKey("custom");
     setOriginLabel(destinationLabel);
     setDestinationLabel(originLabel);
+    setOriginPoint(destinationPoint);
+    setDestinationPoint(originPoint);
+    setOriginResolvedLabel(destinationResolvedLabel);
+    setDestinationResolvedLabel(originResolvedLabel);
+  }
+
+  function chooseSuggestion(field: "origin" | "destination", suggestion: GeocodeSuggestion) {
+    setActiveRouteKey("custom");
+    if (field === "origin") {
+      setOriginLabel(suggestion.label);
+      setOriginPoint(suggestion.point);
+      setOriginResolvedLabel(suggestion.label);
+      setOriginSuggestions([]);
+    } else {
+      setDestinationLabel(suggestion.label);
+      setDestinationPoint(suggestion.point);
+      setDestinationResolvedLabel(suggestion.label);
+      setDestinationSuggestions([]);
+    }
+    setActiveSuggestionField(null);
+  }
+
+  async function geocodePlace(label: string, fallback: Point): Promise<{ label: string; point: Point }> {
+    const query = label.trim();
+    if (!query) {
+      throw new Error("Enter both origin and destination.");
+    }
+
+    const res = await fetch(`/v1/geocode?q=${encodeURIComponent(query)}&limit=1`);
+    const data = (await res.json()) as GeocodeResponse & { error?: string };
+    if (!res.ok) {
+      throw new Error(data.error || `Could not resolve ${query}.`);
+    }
+
+    const [top] = data.results;
+    if (!top) {
+      throw new Error(`No location found for "${query}".`);
+    }
+
+    return {
+      label: top.label || query,
+      point: top.point || fallback,
+    };
   }
 
   async function search(event?: FormEvent) {
     event?.preventDefault();
     setIsLoading(true);
-    setStatus("Searching");
+    setIsResolvingRoute(true);
+    setStatus("Resolving route");
 
     try {
+      const [origin, destination] = await Promise.all([
+        geocodePlace(originLabel, originPoint),
+        geocodePlace(destinationLabel, destinationPoint),
+      ]);
+
+      setOriginPoint(origin.point);
+      setDestinationPoint(destination.point);
+      setOriginResolvedLabel(origin.label);
+      setDestinationResolvedLabel(destination.label);
+      setStatus("Searching");
+
       const res = await fetch("/v1/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          origin: activeRoute.origin,
-          destination: activeRoute.destination,
+          origin: origin.point,
+          destination: destination.point,
           voice_text: voiceText.trim(),
           max_detour_minutes: maxDetour,
           max_results: maxResults,
@@ -182,10 +291,11 @@ export default function Home() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Search failed";
       setResponse(null);
-      setStatus("Needs backend");
+      setStatus(message);
       console.error(message);
     } finally {
       setIsLoading(false);
+      setIsResolvingRoute(false);
     }
   }
 
@@ -248,14 +358,76 @@ export default function Home() {
           <div className="field-row">
             <label>
               <span>Origin</span>
-              <input value={originLabel} onChange={(event) => setOriginLabel(event.target.value)} />
+              <div className="place-field">
+                <input
+                  value={originLabel}
+                  onFocus={() => setActiveSuggestionField("origin")}
+                  onBlur={() => window.setTimeout(() => setActiveSuggestionField(null), 140)}
+                  onChange={(event) => {
+                    setActiveRouteKey("custom");
+                    setActiveSuggestionField("origin");
+                    setOriginLabel(event.target.value);
+                    setOriginResolvedLabel("");
+                  }}
+                  placeholder="Start address or city"
+                />
+                {activeSuggestionField === "origin" && originSuggestions.length > 0 ? (
+                  <div className="suggestion-list">
+                    {originSuggestions.map((suggestion) => (
+                      <button
+                        key={`${suggestion.label}-${suggestion.point.lat}-${suggestion.point.lng}`}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => chooseSuggestion("origin", suggestion)}
+                      >
+                        <MapPin size={14} />
+                        <span>{suggestion.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <small className="field-hint">
+                {originResolvedLabel ? `Using ${originResolvedLabel}` : "Will resolve when you search"}
+              </small>
             </label>
             <button className="icon-button" type="button" onClick={swapRoute} aria-label="Swap route" title="Swap route">
               <RefreshCcw size={18} />
             </button>
             <label>
               <span>Destination</span>
-              <input value={destinationLabel} onChange={(event) => setDestinationLabel(event.target.value)} />
+              <div className="place-field">
+                <input
+                  value={destinationLabel}
+                  onFocus={() => setActiveSuggestionField("destination")}
+                  onBlur={() => window.setTimeout(() => setActiveSuggestionField(null), 140)}
+                  onChange={(event) => {
+                    setActiveRouteKey("custom");
+                    setActiveSuggestionField("destination");
+                    setDestinationLabel(event.target.value);
+                    setDestinationResolvedLabel("");
+                  }}
+                  placeholder="Destination address or city"
+                />
+                {activeSuggestionField === "destination" && destinationSuggestions.length > 0 ? (
+                  <div className="suggestion-list">
+                    {destinationSuggestions.map((suggestion) => (
+                      <button
+                        key={`${suggestion.label}-${suggestion.point.lat}-${suggestion.point.lng}`}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => chooseSuggestion("destination", suggestion)}
+                      >
+                        <MapPin size={14} />
+                        <span>{suggestion.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <small className="field-hint">
+                {destinationResolvedLabel ? `Using ${destinationResolvedLabel}` : "Will resolve when you search"}
+              </small>
             </label>
           </div>
 
@@ -307,7 +479,7 @@ export default function Home() {
           </div>
 
           <button className="primary-button" type="submit" disabled={isLoading}>
-            <span>{isLoading ? "Finding food" : "Find food"}</span>
+            <span>{isResolvingRoute ? "Resolving route" : isLoading ? "Finding food" : "Find food"}</span>
             <ArrowRight size={19} />
           </button>
         </form>

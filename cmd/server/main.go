@@ -11,6 +11,7 @@ import (
 
 	"github.com/dheerajb/routebite/internal/api"
 	"github.com/dheerajb/routebite/internal/cache"
+	"github.com/dheerajb/routebite/internal/geocode"
 	"github.com/dheerajb/routebite/internal/middleware"
 	"github.com/dheerajb/routebite/internal/routing"
 	"github.com/dheerajb/routebite/internal/yelp"
@@ -22,6 +23,7 @@ func main() {
 	port := getEnv("PORT", "8080")
 	yelpKey := os.Getenv("YELP_API_KEY")
 	useMockRouting := os.Getenv("USE_MOCK_ROUTING") == "true"
+	useMockGeocoding := os.Getenv("USE_MOCK_GEOCODING") == "true"
 
 	// Yelp: real client if key present, mock otherwise.
 	var yelpClient yelp.Client
@@ -41,11 +43,19 @@ func main() {
 		routeEngine = routing.NewOSRM()
 	}
 
+	var geocodeClient geocode.Client
+	if useMockGeocoding {
+		log.Println("USE_MOCK_GEOCODING=true - using mock geocoder")
+		geocodeClient = geocode.NewMock()
+	} else {
+		geocodeClient = geocode.NewNominatim()
+	}
+
 	// 5-minute cache for identical Yelp queries.
 	c := cache.New(5 * time.Minute)
 	go purgeLoop(c)
 
-	h := api.NewHandler(yelpClient, routeEngine, c)
+	h := api.NewHandler(yelpClient, routeEngine, geocodeClient, c)
 
 	gin.SetMode(getEnv("GIN_MODE", "release"))
 	r := gin.New()
@@ -59,6 +69,7 @@ func main() {
 	v1 := r.Group("/v1")
 	{
 		v1.POST("/search", h.Search)
+		v1.GET("/geocode", h.Geocode)
 		v1.GET("/health", h.Health)
 	}
 	r.GET("/health", h.Health) // also at root for load balancers

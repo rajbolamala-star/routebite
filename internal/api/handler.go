@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/dheerajb/routebite/internal/cache"
+	"github.com/dheerajb/routebite/internal/geocode"
 	"github.com/dheerajb/routebite/internal/routing"
 	"github.com/dheerajb/routebite/internal/scoring"
 	"github.com/dheerajb/routebite/internal/voice"
@@ -40,14 +42,16 @@ var (
 type Handler struct {
 	yelp    yelp.Client
 	route   routing.Engine
+	geocode geocode.Client
 	cache   *cache.TTL
 	weights scoring.Weights
 }
 
-func NewHandler(y yelp.Client, r routing.Engine, c *cache.TTL) *Handler {
+func NewHandler(y yelp.Client, r routing.Engine, g geocode.Client, c *cache.TTL) *Handler {
 	return &Handler{
 		yelp:    y,
 		route:   r,
+		geocode: g,
 		cache:   c,
 		weights: scoring.Default,
 	}
@@ -117,6 +121,23 @@ func (h *Handler) Search(c *gin.Context) {
 
 	searchTotal.WithLabelValues("success").Inc()
 	c.JSON(http.StatusOK, resp)
+}
+
+// Geocode handles GET /v1/geocode?q=place and returns address suggestions.
+func (h *Handler) Geocode(c *gin.Context) {
+	q := c.Query("q")
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "5"))
+	if q == "" {
+		c.JSON(http.StatusOK, GeocodeResponse{Results: []geocode.Suggestion{}})
+		return
+	}
+
+	results, err := h.geocode.Search(c.Request.Context(), q, limit)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "geocoding failed: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, GeocodeResponse{Results: results})
 }
 
 // fetchYelp wraps the Yelp call with a content-addressed cache so identical

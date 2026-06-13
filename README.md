@@ -96,6 +96,7 @@ Mimics the tradeoff a driver makes mentally: how good is it, vs how much does it
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/v1/search` | Find restaurants along a route |
+| `GET`  | `/v1/geocode` | Resolve typed places into coordinates |
 | `GET`  | `/v1/health` | Health check |
 | `GET`  | `/v1/metrics` | Prometheus metrics |
 
@@ -146,6 +147,10 @@ http://localhost:3000/
 ```
 
 The Next.js app proxies `/v1/*` requests to the Go API at `localhost:8080`.
+Local `make run` uses mock routing, mock Yelp, and mock geocoding so the full
+flow works without external API keys. Use `make run-geocode` when you want
+real typed-address lookup with mock food/routing. `make run-real` uses OSRM and
+Nominatim geocoding, and uses Yelp when `YELP_API_KEY` is set.
 
 Useful web checks:
 
