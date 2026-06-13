@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-up docker-down deploy clean
+.PHONY: help build test run run-real web-install web-dev web-build web-lint web-typecheck docker-up docker-down deploy clean
 
 help:
 	@echo "RouteBite — available targets:"
@@ -6,6 +6,10 @@ help:
 	@echo "  test         - Run unit tests"
 	@echo "  run          - Run locally (mock providers, no API key required)"
 	@echo "  run-real     - Run with real Yelp + OSRM (requires YELP_API_KEY)"
+	@echo "  web-install  - Install Next.js app dependencies"
+	@echo "  web-dev      - Run the Next.js app at localhost:3000"
+	@echo "  web-build    - Build the Next.js app"
+	@echo "  web-lint     - Lint the Next.js app"
 	@echo "  docker-up    - Run via docker-compose"
 	@echo "  docker-down  - Stop docker-compose"
 	@echo "  deploy       - Deploy to Fly.io"
@@ -22,6 +26,21 @@ run: build
 run-real: build
 	USE_MOCK_ROUTING=false ./bin/routebite
 
+web-install:
+	cd web && npm install
+
+web-dev:
+	cd web && npm run dev
+
+web-build:
+	cd web && npm run build
+
+web-lint:
+	cd web && npm run lint
+
+web-typecheck:
+	cd web && npm run typecheck
+
 docker-up:
 	cd deploy/docker && docker-compose up --build
 
@@ -32,4 +51,4 @@ deploy:
 	fly deploy
 
 clean:
-	rm -rf bin/
+	rm -rf bin/ web/.next web/out

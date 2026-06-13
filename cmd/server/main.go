@@ -51,10 +51,10 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery(), middleware.StructuredLogger())
 
-	r.Static("/web", "./web")
-	r.GET("/", func(c *gin.Context) {
-		c.File("./web/index.html")
-	})
+	if _, err := os.Stat("./web/out/index.html"); err == nil {
+		r.Static("/_next", "./web/out/_next")
+		r.StaticFile("/", "./web/out/index.html")
+	}
 
 	v1 := r.Group("/v1")
 	{

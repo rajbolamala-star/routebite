@@ -83,6 +83,7 @@ Mimics the tradeoff a driver makes mentally: how good is it, vs how much does it
 
 - **Language:** Go 1.21
 - **HTTP:** Gin
+- **Web app:** Next.js, React, TypeScript
 - **Restaurant data:** Yelp Fusion (free tier — 5000 calls/day)
 - **Routing:** OSRM public demo for MVP (swap for Mapbox / Google Routes for production)
 - **Voice parser:** keyword + intent extractor (pluggable for OpenAI / Whisper later)
@@ -120,23 +121,44 @@ make docker-up
 ./scripts/smoke-test.sh
 ```
 
-## Web app prototype
+## Web app
 
-The Go server also serves a mobile-first prototype at:
+RouteBite has a mobile-first Next.js app in `web/`. Run the API and web app in
+two terminals during development.
 
-```text
-http://localhost:8080/
-```
-
-Run it locally with mock providers:
+Terminal 1, start the Go API with mock providers:
 
 ```bash
 make run
 ```
 
-The prototype lets you pick a sample route, enter or speak a food request,
-review ranked pickup options, call the restaurant, open navigation, and hear the
-one-line voice summary.
+Terminal 2, install and start the web app:
+
+```bash
+make web-install
+make web-dev
+```
+
+Open:
+
+```text
+http://localhost:3000/
+```
+
+The Next.js app proxies `/v1/*` requests to the Go API at `localhost:8080`.
+
+Useful web checks:
+
+```bash
+make web-lint
+make web-typecheck
+make web-build
+```
+
+The app lets you pick a sample route, enter or speak a food request, review
+ranked pickup options, call the restaurant, open navigation, and hear the
+one-line voice summary. Address autocomplete, real route entry, and production
+mobile packaging are next milestones.
 
 ## What this project demonstrates
 
