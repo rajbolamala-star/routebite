@@ -12,8 +12,8 @@ func TestRank_FiltersByDetour(t *testing.T) {
 		{Name: "Near", Rating: 4.0, ReviewCount: 100},
 		{Name: "Far", Rating: 5.0, ReviewCount: 500},
 	}
-	bs[0].Coordinates.Latitude, bs[0].Coordinates.Longitude = 25.0, -80.0   // on route
-	bs[1].Coordinates.Latitude, bs[1].Coordinates.Longitude = 25.5, -80.0   // far off
+	bs[0].Coordinates.Latitude, bs[0].Coordinates.Longitude = 25.0, -80.0 // on route
+	bs[1].Coordinates.Latitude, bs[1].Coordinates.Longitude = 25.5, -80.0 // far off
 
 	poly := []routing.Point{{Lat: 25.0, Lng: -80.0}, {Lat: 25.0, Lng: -79.5}}
 
@@ -57,7 +57,11 @@ func TestVoiceSummary_NonEmpty(t *testing.T) {
 				Categories: []struct {
 					Title string `json:"title"`
 					Alias string `json:"alias"`
-				}{{Title: "Vietnamese"}}},
+				}{{Title: "Vietnamese"}},
+				Coordinates: struct {
+					Latitude  float64 `json:"latitude"`
+					Longitude float64 `json:"longitude"`
+				}{Latitude: 25.0, Longitude: -80.0}},
 		},
 		[]routing.Point{{Lat: 25.0, Lng: -80.0}, {Lat: 25.0, Lng: -79.5}},
 		10, 5, Default,
