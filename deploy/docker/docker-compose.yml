@@ -11,3 +11,4 @@ services:
       - PORT=8080
       - YELP_API_KEY=${YELP_API_KEY:-}
       - USE_MOCK_ROUTING=${USE_MOCK_ROUTING:-true}
+      - USE_MOCK_GEOCODING=${USE_MOCK_GEOCODING:-true}

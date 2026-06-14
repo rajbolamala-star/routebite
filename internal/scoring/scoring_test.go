@@ -41,6 +41,26 @@ func TestRank_SortsByScoreDesc(t *testing.T) {
 	}
 }
 
+func TestRankWithDetours_UsesPreciseDetourOverrides(t *testing.T) {
+	bs := []yelp.Business{
+		{ID: "near", Name: "Near", Rating: 4.0, ReviewCount: 100},
+		{ID: "far", Name: "Far", Rating: 5.0, ReviewCount: 500},
+	}
+	for i := range bs {
+		bs[i].Coordinates.Latitude, bs[i].Coordinates.Longitude = 25.0, -80.0
+	}
+	poly := []routing.Point{{Lat: 25.0, Lng: -80.0}, {Lat: 25.0, Lng: -79.5}}
+
+	got := RankWithDetours(bs, poly, map[string]int{
+		"near": 2,
+		"far":  12,
+	}, 5, 5, Default)
+
+	if len(got) != 1 || got[0].Name != "Near" || got[0].ExtraMinutes != 2 {
+		t.Fatalf("RankWithDetours() = %+v, want only Near with 2 extra minutes", got)
+	}
+}
+
 func TestVoiceSummary_Empty(t *testing.T) {
 	s := VoiceSummary(nil, "soup")
 	if s == "" {

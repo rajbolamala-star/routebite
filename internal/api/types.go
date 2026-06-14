@@ -1,6 +1,9 @@
 package api
 
-import "github.com/dheerajb/routebite/internal/scoring"
+import (
+	"github.com/dheerajb/routebite/internal/geocode"
+	"github.com/dheerajb/routebite/internal/scoring"
+)
 
 // LatLng is a geographic coordinate.
 type LatLng struct {
@@ -30,4 +33,16 @@ type SearchResponse struct {
 	RouteSummary RouteSummary         `json:"route_summary"`
 	Results      []scoring.Restaurant `json:"results"`
 	VoiceSummary string               `json:"voice_summary"` // for clients to read aloud
+}
+
+// GeocodeResponse is returned by GET /v1/geocode.
+type GeocodeResponse struct {
+	Results []geocode.Suggestion `json:"results"`
+}
+
+// Providers describes which backing services are active.
+type Providers struct {
+	Restaurants string `json:"restaurants"`
+	Routing     string `json:"routing"`
+	Geocoding   string `json:"geocoding"`
 }

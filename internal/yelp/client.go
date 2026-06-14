@@ -13,15 +13,15 @@ import (
 
 // Business is the subset of Yelp Fusion business fields we use.
 type Business struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Phone        string   `json:"phone"`
-	DisplayPhone string   `json:"display_phone"`
-	URL          string   `json:"url"`
-	Rating       float64  `json:"rating"`
-	ReviewCount  int      `json:"review_count"`
-	Price        string   `json:"price"`
-	IsClosed     bool     `json:"is_closed"`
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	Phone        string  `json:"phone"`
+	DisplayPhone string  `json:"display_phone"`
+	URL          string  `json:"url"`
+	Rating       float64 `json:"rating"`
+	ReviewCount  int     `json:"review_count"`
+	Price        string  `json:"price"`
+	IsClosed     bool    `json:"is_closed"`
 	Categories   []struct {
 		Title string `json:"title"`
 		Alias string `json:"alias"`
@@ -45,12 +45,12 @@ type Client interface {
 
 // SearchParams maps to the Yelp Fusion /businesses/search query.
 type SearchParams struct {
-	Term      string
-	Lat       float64
-	Lng       float64
-	RadiusM   int // capped at 40000 by Yelp
-	Limit     int // max 50
-	OpenNow   bool
+	Term    string
+	Lat     float64
+	Lng     float64
+	RadiusM int // capped at 40000 by Yelp
+	Limit   int // max 50
+	OpenNow bool
 }
 
 // --- HTTP implementation ---
@@ -122,10 +122,16 @@ func (c *httpClient) Search(ctx context.Context, p SearchParams) ([]Business, er
 	body, _ := io.ReadAll(resp.Body)
 	var out yelpResponse
 	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("yelp: HTTP %d - %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+		}
+		return nil, fmt.Errorf("yelp: could not decode response: %w", err)
 	}
 	if out.Error != nil {
 		return nil, fmt.Errorf("yelp: %s - %s", out.Error.Code, out.Error.Description)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("yelp: HTTP %d - %s", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 	return out.Businesses, nil
 }

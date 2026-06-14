@@ -9,3 +9,7 @@ bin/
 *.log
 vendor/
 .gocache/
+web/.next/
+web/out/
+web/node_modules/
+web/tsconfig.tsbuildinfo

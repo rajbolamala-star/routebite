@@ -11,6 +11,7 @@ import (
 
 	"github.com/dheerajb/routebite/internal/api"
 	"github.com/dheerajb/routebite/internal/cache"
+	"github.com/dheerajb/routebite/internal/geocode"
 	"github.com/dheerajb/routebite/internal/middleware"
 	"github.com/dheerajb/routebite/internal/routing"
 	"github.com/dheerajb/routebite/internal/yelp"
@@ -22,43 +23,67 @@ func main() {
 	port := getEnv("PORT", "8080")
 	yelpKey := os.Getenv("YELP_API_KEY")
 	useMockRouting := os.Getenv("USE_MOCK_ROUTING") == "true"
+	useMockGeocoding := os.Getenv("USE_MOCK_GEOCODING") == "true"
 
 	// Yelp: real client if key present, mock otherwise.
 	var yelpClient yelp.Client
+	restaurantProvider := "yelp"
 	if yelpKey == "" {
-		log.Println("YELP_API_KEY not set - using mock Yelp client")
+		restaurantProvider = "mock"
+		log.Println("restaurant provider: mock (YELP_API_KEY not set)")
 		yelpClient = yelp.NewMock()
 	} else {
+		log.Println("restaurant provider: yelp")
 		yelpClient = yelp.New(yelpKey)
 	}
 
 	// Routing: OSRM public for real, mock as fallback / for tests.
 	var routeEngine routing.Engine
+	routingProvider := "osrm"
 	if useMockRouting {
-		log.Println("USE_MOCK_ROUTING=true - using mock route engine")
+		routingProvider = "mock"
+		log.Println("routing provider: mock (USE_MOCK_ROUTING=true)")
 		routeEngine = routing.NewMockEngine()
 	} else {
+		log.Println("routing provider: osrm")
 		routeEngine = routing.NewOSRM()
+	}
+
+	var geocodeClient geocode.Client
+	geocodingProvider := "nominatim"
+	if useMockGeocoding {
+		geocodingProvider = "mock"
+		log.Println("geocoding provider: mock (USE_MOCK_GEOCODING=true)")
+		geocodeClient = geocode.NewMock()
+	} else {
+		log.Println("geocoding provider: nominatim")
+		geocodeClient = geocode.NewNominatim()
 	}
 
 	// 5-minute cache for identical Yelp queries.
 	c := cache.New(5 * time.Minute)
 	go purgeLoop(c)
 
-	h := api.NewHandler(yelpClient, routeEngine, c)
+	h := api.NewHandler(yelpClient, routeEngine, geocodeClient, c, api.Providers{
+		Restaurants: restaurantProvider,
+		Routing:     routingProvider,
+		Geocoding:   geocodingProvider,
+	})
 
 	gin.SetMode(getEnv("GIN_MODE", "release"))
 	r := gin.New()
 	r.Use(gin.Recovery(), middleware.StructuredLogger())
 
-	r.Static("/web", "./web")
-	r.GET("/", func(c *gin.Context) {
-		c.File("./web/index.html")
-	})
+	if _, err := os.Stat("./web/out/index.html"); err == nil {
+		r.Static("/_next", "./web/out/_next")
+		r.StaticFile("/", "./web/out/index.html")
+	}
 
 	v1 := r.Group("/v1")
 	{
 		v1.POST("/search", h.Search)
+		v1.GET("/geocode", h.Geocode)
+		v1.GET("/providers", h.Providers)
 		v1.GET("/health", h.Health)
 	}
 	r.GET("/health", h.Health) // also at root for load balancers

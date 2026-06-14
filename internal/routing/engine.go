@@ -12,9 +12,9 @@ import (
 
 // Route is the minimal route data we need from a routing provider.
 type Route struct {
-	DurationSec float64    // total trip seconds
-	DistanceM   float64    // total trip meters
-	Polyline    []Point    // ordered route geometry
+	DurationSec float64 // total trip seconds
+	DistanceM   float64 // total trip meters
+	Polyline    []Point // ordered route geometry
 }
 
 // Point is one geographic vertex on the polyline.
@@ -26,6 +26,11 @@ type Point struct {
 // Engine fetches a route between two points.
 type Engine interface {
 	Route(ctx context.Context, origin, dest Point) (Route, error)
+}
+
+// ViaEngine can fetch a route that includes one stop between origin and dest.
+type ViaEngine interface {
+	RouteVia(ctx context.Context, origin, stop, dest Point) (Route, error)
 }
 
 // --- OSRM (public demo server) ---
@@ -61,6 +66,17 @@ func (o *OSRM) Route(ctx context.Context, origin, dest Point) (Route, error) {
 	url := fmt.Sprintf("%s/route/v1/driving/%f,%f;%f,%f?overview=full&geometries=geojson",
 		o.base, origin.Lng, origin.Lat, dest.Lng, dest.Lat)
 
+	return o.fetchRoute(ctx, url)
+}
+
+func (o *OSRM) RouteVia(ctx context.Context, origin, stop, dest Point) (Route, error) {
+	url := fmt.Sprintf("%s/route/v1/driving/%f,%f;%f,%f;%f,%f?overview=full&geometries=geojson",
+		o.base, origin.Lng, origin.Lat, stop.Lng, stop.Lat, dest.Lng, dest.Lat)
+
+	return o.fetchRoute(ctx, url)
+}
+
+func (o *OSRM) fetchRoute(ctx context.Context, url string) (Route, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return Route{}, err
@@ -89,6 +105,36 @@ func (o *OSRM) Route(ctx context.Context, origin, dest Point) (Route, error) {
 		}
 	}
 	return route, nil
+}
+
+// RouteVia fetches or composes a route with one stop. Engines that implement
+// ViaEngine can do this in a single provider request; others fall back to two
+// ordinary route calls.
+func RouteVia(ctx context.Context, e Engine, origin, stop, dest Point) (Route, error) {
+	if via, ok := e.(ViaEngine); ok {
+		return via.RouteVia(ctx, origin, stop, dest)
+	}
+
+	first, err := e.Route(ctx, origin, stop)
+	if err != nil {
+		return Route{}, err
+	}
+	second, err := e.Route(ctx, stop, dest)
+	if err != nil {
+		return Route{}, err
+	}
+
+	polyline := append([]Point{}, first.Polyline...)
+	if len(second.Polyline) > 1 {
+		polyline = append(polyline, second.Polyline[1:]...)
+	} else {
+		polyline = append(polyline, second.Polyline...)
+	}
+	return Route{
+		DurationSec: first.DurationSec + second.DurationSec,
+		DistanceM:   first.DistanceM + second.DistanceM,
+		Polyline:    polyline,
+	}, nil
 }
 
 // --- Mock ---
