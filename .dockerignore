@@ -1,4 +1,8 @@
 bin/
+.gocache/
+web/.next/
+web/node_modules/
+web/tsconfig.tsbuildinfo
 *.exe
 .env
 .env.local

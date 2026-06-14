@@ -6,6 +6,7 @@ primary_region = "mia"  # Miami is closest to your test scenario
 
 [env]
   PORT = "8080"
+  USE_MOCK_GEOCODING = "false"
   USE_MOCK_ROUTING = "false"  # use OSRM public
 
 [http_service]
@@ -20,4 +21,4 @@ primary_region = "mia"  # Miami is closest to your test scenario
     timeout = "5s"
     grace_period = "10s"
     method = "GET"
-    path = "/health"
+    path = "/v1/health"
