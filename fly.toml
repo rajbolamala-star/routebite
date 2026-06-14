@@ -1,23 +1,34 @@
-app = "routebite"
-primary_region = "mia"  # Miami is closest to your test scenario
+# fly.toml app configuration file generated for routebite on 2026-06-14T19:08:52-04:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'routebite'
+primary_region = 'dfw'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [env]
-  PORT = "8080"
-  USE_MOCK_ROUTING = "false"  # use OSRM public
+  PORT = '8080'
+  USE_MOCK_GEOCODING = 'false'
+  USE_MOCK_ROUTING = 'false'
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
 
   [[http_service.checks]]
-    interval = "30s"
-    timeout = "5s"
-    grace_period = "10s"
-    method = "GET"
-    path = "/health"
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/v1/health'
+
+[[vm]]
+  memory = '1gb'
+  cpus = 1
+  memory_mb = 1024
