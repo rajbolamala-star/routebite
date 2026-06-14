@@ -155,6 +155,9 @@ setting `YELP_API_KEY` when you want live Yelp restaurants with stable mock
 routing/geocoding. `make run-real` uses OSRM and Nominatim geocoding, and uses
 Yelp when `YELP_API_KEY` is set.
 
+For a deployed frontend, set `ROUTEBITE_API_BASE` to the public backend URL.
+The production Next.js rewrite will forward `/v1/*` to that API.
+
 To get live Yelp results:
 
 1. Create a Yelp Fusion app at https://docs.developer.yelp.com/docs/fusion-authentication
@@ -180,6 +183,41 @@ The app lets you pick a sample route, enter or speak a food request, review
 ranked pickup options, call the restaurant, open navigation, and hear the
 one-line voice summary. Address autocomplete, real route entry, and production
 mobile packaging are next milestones.
+
+## Deploy
+
+### Backend on Fly.io
+
+The Go API is Fly-ready through `Dockerfile` and `fly.toml`.
+
+```bash
+fly secrets set YELP_API_KEY=your_yelp_fusion_api_key
+fly deploy
+fly status
+```
+
+Health and provider checks:
+
+```text
+https://routebite.fly.dev/v1/health
+https://routebite.fly.dev/v1/providers
+```
+
+`/v1/providers` should show `restaurants: "yelp"` when the Yelp secret is set.
+
+### Frontend on Vercel
+
+Create a Vercel project from this GitHub repo and use:
+
+```text
+Root Directory: web
+Build Command: npm run build
+Output Directory: .next
+Environment Variable: ROUTEBITE_API_BASE=https://routebite.fly.dev
+```
+
+The frontend keeps calling `/v1/*`; Next.js rewrites those requests to the Fly
+backend using `ROUTEBITE_API_BASE`.
 
 ## What this project demonstrates
 

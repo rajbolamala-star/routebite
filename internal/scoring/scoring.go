@@ -35,6 +35,7 @@ type LatLng struct {
 // Restaurant is one ranked result returned by the scoring engine.
 type Restaurant struct {
 	Name               string   `json:"name"`
+	ImageURL           string   `json:"image_url"`
 	Rating             float64  `json:"rating"`
 	ReviewCount        int      `json:"review_count"`
 	Phone              string   `json:"phone"`
@@ -166,6 +167,7 @@ func toRestaurant(b yelp.Business, p routing.Point, distM int, extraMin int, sco
 
 	return Restaurant{
 		Name:               b.Name,
+		ImageURL:           b.ImageURL,
 		Rating:             b.Rating,
 		ReviewCount:        b.ReviewCount,
 		Phone:              phone,
