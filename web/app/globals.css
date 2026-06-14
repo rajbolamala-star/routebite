@@ -523,7 +523,7 @@ select:focus {
 
 .result-card {
   display: grid;
-  grid-template-columns: 34px 1fr;
+  grid-template-columns: 112px 1fr;
   gap: 12px;
   padding: 14px;
   border: 1px solid rgba(17, 24, 39, 0.1);
@@ -531,7 +531,35 @@ select:focus {
   background: #fff;
 }
 
+.result-photo {
+  position: relative;
+  min-height: 112px;
+  overflow: hidden;
+  border-radius: 8px;
+  background-color: #eef4f1;
+  background-position: center;
+  background-size: cover;
+}
+
+.result-photo.empty {
+  background:
+    linear-gradient(135deg, rgba(15, 118, 110, 0.16), transparent 55%),
+    linear-gradient(45deg, rgba(245, 158, 11, 0.22), transparent 60%),
+    #eef4f1;
+}
+
+.result-photo.empty::after {
+  content: "";
+  position: absolute;
+  inset: 34px;
+  border: 2px solid rgba(15, 118, 110, 0.16);
+  border-radius: 50%;
+}
+
 .result-rank {
+  position: absolute;
+  top: 8px;
+  left: 8px;
   width: 34px;
   height: 34px;
   display: grid;
@@ -584,11 +612,12 @@ select:focus {
 .actions {
   gap: 8px;
   margin-top: 13px;
+  flex-wrap: wrap;
 }
 
 .actions a {
   min-height: 40px;
-  flex: 1;
+  flex: 1 1 118px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -604,9 +633,20 @@ select:focus {
   background: var(--accent);
 }
 
+.call-action.disabled {
+  pointer-events: none;
+  color: var(--muted);
+  background: #eef2f7;
+}
+
 .nav-action {
   color: var(--ink);
   background: #eef2f7;
+}
+
+.yelp-action {
+  color: #9f1239;
+  background: rgba(225, 29, 72, 0.08);
 }
 
 @media (max-width: 900px) {
@@ -650,5 +690,17 @@ select:focus {
 
   .metrics {
     grid-template-columns: 1fr;
+  }
+
+  .result-card {
+    grid-template-columns: 88px 1fr;
+  }
+
+  .result-photo {
+    min-height: 96px;
+  }
+
+  .actions a {
+    flex-basis: 100%;
   }
 }

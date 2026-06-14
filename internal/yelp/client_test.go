@@ -36,7 +36,7 @@ func testClient(t *testing.T, status int, body string, inspect func(*http.Reques
 }
 
 func TestHTTPClientSearchSuccess(t *testing.T) {
-	c := testClient(t, http.StatusOK, `{"businesses":[{"id":"1","name":"Real Soup","rating":4.7,"review_count":321}]}`, func(r *http.Request) {
+	c := testClient(t, http.StatusOK, `{"businesses":[{"id":"1","name":"Real Soup","image_url":"https://img.example/soup.jpg","rating":4.7,"review_count":321}]}`, func(r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
 			t.Fatalf("Authorization header = %q, want Bearer test-key", got)
 		}
@@ -56,7 +56,7 @@ func TestHTTPClientSearchSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
-	if len(got) != 1 || got[0].Name != "Real Soup" {
+	if len(got) != 1 || got[0].Name != "Real Soup" || got[0].ImageURL == "" {
 		t.Fatalf("Search() = %+v, want Real Soup", got)
 	}
 }
