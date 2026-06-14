@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -86,12 +87,11 @@ func (h *Handler) Search(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	originPoint := routing.Point{Lat: req.Origin.Lat, Lng: req.Origin.Lng}
+	destinationPoint := routing.Point{Lat: req.Destination.Lat, Lng: req.Destination.Lng}
 
 	// 1) Route.
-	route, err := h.route.Route(ctx,
-		routing.Point{Lat: req.Origin.Lat, Lng: req.Origin.Lng},
-		routing.Point{Lat: req.Destination.Lat, Lng: req.Destination.Lng},
-	)
+	route, err := h.route.Route(ctx, originPoint, destinationPoint)
 	if err != nil {
 		searchTotal.WithLabelValues("route_error").Inc()
 		c.JSON(http.StatusBadGateway, gin.H{"error": "routing failed: " + err.Error()})
@@ -109,7 +109,8 @@ func (h *Handler) Search(c *gin.Context) {
 	}
 
 	// 3) Score + detour math.
-	results := scoring.Rank(businesses, route.Polyline, req.MaxDetourMinutes, req.MaxResults, h.weights)
+	detours := h.preciseDetours(ctx, businesses, originPoint, destinationPoint, route.DurationSec)
+	results := scoring.RankWithDetours(businesses, route.Polyline, detours, req.MaxDetourMinutes, req.MaxResults, h.weights)
 
 	// 4) Build response.
 	resp := SearchResponse{
@@ -123,6 +124,36 @@ func (h *Handler) Search(c *gin.Context) {
 
 	searchTotal.WithLabelValues("success").Inc()
 	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handler) preciseDetours(
+	ctx context.Context,
+	businesses []yelp.Business,
+	origin routing.Point,
+	destination routing.Point,
+	baseDurationSec float64,
+) map[string]int {
+	detours := make(map[string]int, len(businesses))
+	for _, b := range businesses {
+		if b.IsClosed {
+			continue
+		}
+		stop := routing.Point{Lat: b.Coordinates.Latitude, Lng: b.Coordinates.Longitude}
+		if stop.Lat == 0 && stop.Lng == 0 {
+			continue
+		}
+
+		via, err := routing.RouteVia(ctx, h.route, origin, stop, destination)
+		if err != nil {
+			continue
+		}
+		extraMin := int(math.Round((via.DurationSec - baseDurationSec) / 60.0))
+		if extraMin < 0 {
+			extraMin = 0
+		}
+		detours[scoring.DetourKey(b)] = extraMin
+	}
+	return detours
 }
 
 // Geocode handles GET /v1/geocode?q=place and returns address suggestions.

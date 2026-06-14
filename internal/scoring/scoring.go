@@ -63,6 +63,27 @@ func Rank(
 	maxResults int,
 	w Weights,
 ) []Restaurant {
+	return RankWithDetours(bs, poly, nil, maxDetourMin, maxResults, w)
+}
+
+// DetourKey returns the stable key used by detour override maps.
+func DetourKey(b yelp.Business) string {
+	if b.ID != "" {
+		return b.ID
+	}
+	return b.Name
+}
+
+// RankWithDetours ranks businesses using precise detour minute overrides when
+// available, falling back to the distance-based estimate used by Rank.
+func RankWithDetours(
+	bs []yelp.Business,
+	poly []routing.Point,
+	detourMinutes map[string]int,
+	maxDetourMin int,
+	maxResults int,
+	w Weights,
+) []Restaurant {
 	if maxResults <= 0 {
 		maxResults = 5
 	}
@@ -78,13 +99,14 @@ func Rank(
 		p := routing.Point{Lat: b.Coordinates.Latitude, Lng: b.Coordinates.Longitude}
 		distM := routing.MinDistanceToPolyline(p, poly)
 
-		// Convert detour distance to extra minutes. Assumption: a 1-km detour
-		// adds ~2 minutes round-trip in city driving (off route, park, return).
-		// This is intentionally simple — replace with a real "via" call to the
-		// routing engine in v2 for accuracy.
 		extraMin := int(math.Round((distM / 1000.0) * 2.0))
 		if extraMin == 0 && distM > 200 {
 			extraMin = 1
+		}
+		if detourMinutes != nil {
+			if detour, ok := detourMinutes[DetourKey(b)]; ok {
+				extraMin = detour
+			}
 		}
 		if extraMin > maxDetourMin {
 			continue

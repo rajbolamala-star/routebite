@@ -187,6 +187,7 @@ mobile packaging are next milestones.
 - 3rd-party API integration with rate-limit protection (Yelp)
 - External routing service integration (OSRM)
 - Geo math: bounding box, distance-to-route
+- Via-route detour calculation for restaurant stops
 - Ranking/scoring algorithm with tunable weights
 - Voice-friendly response generation
 - Production patterns: caching, structured logging, Prometheus metrics, graceful shutdown
