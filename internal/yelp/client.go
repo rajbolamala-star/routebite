@@ -15,6 +15,7 @@ import (
 type Business struct {
 	ID           string  `json:"id"`
 	Name         string  `json:"name"`
+	ImageURL     string  `json:"image_url"`
 	Phone        string  `json:"phone"`
 	DisplayPhone string  `json:"display_phone"`
 	URL          string  `json:"url"`
@@ -170,6 +171,7 @@ func (Mock) Search(_ context.Context, p SearchParams) ([]Business, error) {
 		b := Business{
 			ID:           fmt.Sprintf("mock-%d", i),
 			Name:         o.name,
+			ImageURL:     "",
 			Phone:        "+13055551200",
 			DisplayPhone: "(305) 555-1200",
 			URL:          "https://www.yelp.com/biz/mock-" + strconv.Itoa(i),

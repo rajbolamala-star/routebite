@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock3,
   Compass,
+  ExternalLink,
   MapPin,
   Mic,
   Navigation,
@@ -33,6 +34,7 @@ type RoutePreset = {
 
 type Restaurant = {
   name: string;
+  image_url: string;
   rating: number;
   review_count: number;
   phone: string;
@@ -130,7 +132,19 @@ function cuisineText(item: Restaurant) {
 }
 
 function mapsUrl(place: Restaurant) {
-  return `https://www.google.com/maps/search/?api=1&query=${place.location.lat},${place.location.lng}`;
+  const query = `${place.name} ${place.address || ""} ${place.location.lat},${place.location.lng}`.trim();
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
+function reviewText(count: number) {
+  if (!Number.isFinite(count) || count <= 0) return "No reviews yet";
+  if (count === 1) return "1 review";
+  return `${count.toLocaleString()} reviews`;
+}
+
+function resultImageStyle(item: Restaurant) {
+  if (!item.image_url) return undefined;
+  return { backgroundImage: `url("${item.image_url}")` };
 }
 
 function getSpeechRecognition(): SpeechRecognitionConstructor | null {
@@ -562,14 +576,29 @@ export default function Home() {
         {!response?.results.length ? (
           <div className="empty-state">
             <Play size={25} />
-            <strong>Ask for what you want.</strong>
-            <p>Try “pizza for the family,” “coffee near the route,” or “healthy lunch under 5 minutes.”</p>
+            {response ? (
+              <>
+                <strong>No matching stops on this route.</strong>
+                <p>Try a broader food request, turn off open-now, or allow a longer detour.</p>
+              </>
+            ) : (
+              <>
+                <strong>Ask for what you want.</strong>
+                <p>Try “pizza for the family,” “coffee near the route,” or “healthy lunch under 5 minutes.”</p>
+              </>
+            )}
           </div>
         ) : (
           <div className="results-list">
             {response.results.map((item, index) => (
               <article className="result-card" key={`${item.name}-${item.address}`}>
-                <div className="result-rank">{index + 1}</div>
+                <div
+                  className={item.image_url ? "result-photo" : "result-photo empty"}
+                  style={resultImageStyle(item)}
+                  aria-hidden="true"
+                >
+                  <div className="result-rank">{index + 1}</div>
+                </div>
                 <div className="result-body">
                   <div className="result-head">
                     <div>
@@ -581,7 +610,7 @@ export default function Home() {
                   <div className="fact-row">
                     <span>
                       <Star size={14} />
-                      {item.rating.toFixed(1)} stars
+                      {item.rating.toFixed(1)} · {reviewText(item.review_count)}
                     </span>
                     <span>
                       <Clock3 size={14} />
@@ -591,7 +620,11 @@ export default function Home() {
                   </div>
                   <p className="address">{item.address || "Address unavailable"}</p>
                   <div className="actions">
-                    <a className="call-action" href={item.call_link || "#"} aria-disabled={!item.call_link}>
+                    <a
+                      className={item.call_link ? "call-action" : "call-action disabled"}
+                      href={item.call_link || undefined}
+                      aria-disabled={!item.call_link}
+                    >
                       <Phone size={16} />
                       Call
                     </a>
@@ -599,6 +632,12 @@ export default function Home() {
                       <Navigation size={16} />
                       Navigate
                     </a>
+                    {item.yelp_url ? (
+                      <a className="yelp-action" href={item.yelp_url} target="_blank" rel="noreferrer">
+                        <ExternalLink size={16} />
+                        Yelp
+                      </a>
+                    ) : null}
                   </div>
                 </div>
               </article>
