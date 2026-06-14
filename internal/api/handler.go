@@ -40,20 +40,22 @@ var (
 
 // Handler is the API layer. All deps are injected for easy testing.
 type Handler struct {
-	yelp    yelp.Client
-	route   routing.Engine
-	geocode geocode.Client
-	cache   *cache.TTL
-	weights scoring.Weights
+	yelp      yelp.Client
+	route     routing.Engine
+	geocode   geocode.Client
+	cache     *cache.TTL
+	weights   scoring.Weights
+	providers Providers
 }
 
-func NewHandler(y yelp.Client, r routing.Engine, g geocode.Client, c *cache.TTL) *Handler {
+func NewHandler(y yelp.Client, r routing.Engine, g geocode.Client, c *cache.TTL, providers Providers) *Handler {
 	return &Handler{
-		yelp:    y,
-		route:   r,
-		geocode: g,
-		cache:   c,
-		weights: scoring.Default,
+		yelp:      y,
+		route:     r,
+		geocode:   g,
+		cache:     c,
+		weights:   scoring.Default,
+		providers: providers,
 	}
 }
 
@@ -138,6 +140,11 @@ func (h *Handler) Geocode(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, GeocodeResponse{Results: results})
+}
+
+// Providers handles GET /v1/providers.
+func (h *Handler) Providers(c *gin.Context) {
+	c.JSON(http.StatusOK, h.providers)
 }
 
 // fetchYelp wraps the Yelp call with a content-addressed cache so identical

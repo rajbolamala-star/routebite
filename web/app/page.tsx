@@ -66,6 +66,12 @@ type GeocodeResponse = {
   results: GeocodeSuggestion[];
 };
 
+type Providers = {
+  restaurants: "mock" | "yelp" | string;
+  routing: "mock" | "osrm" | string;
+  geocoding: "mock" | "nominatim" | string;
+};
+
 type SpeechRecognitionConstructor = new () => SpeechRecognition;
 
 type SpeechRecognition = {
@@ -165,8 +171,28 @@ export default function Home() {
   const [originSuggestions, setOriginSuggestions] = useState<GeocodeSuggestion[]>([]);
   const [destinationSuggestions, setDestinationSuggestions] = useState<GeocodeSuggestion[]>([]);
   const [activeSuggestionField, setActiveSuggestionField] = useState<"origin" | "destination" | null>(null);
+  const [providers, setProviders] = useState<Providers | null>(null);
+  const [searchError, setSearchError] = useState("");
 
   const summary = response?.voice_summary || "Ready for your first search";
+  const restaurantProviderLabel = providers?.restaurants === "yelp" ? "Live Yelp" : "Mock restaurants";
+
+  useEffect(() => {
+    async function loadProviders() {
+      try {
+        const res = await fetch("/v1/providers");
+        const data = (await res.json()) as Providers & { error?: string };
+        if (!res.ok) {
+          throw new Error(data.error || "Provider status unavailable.");
+        }
+        setProviders(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Provider status unavailable.";
+        setSearchError(message);
+      }
+    }
+    void loadProviders();
+  }, []);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -257,6 +283,7 @@ export default function Home() {
     setIsLoading(true);
     setIsResolvingRoute(true);
     setStatus("Resolving route");
+    setSearchError("");
 
     try {
       const [origin, destination] = await Promise.all([
@@ -290,8 +317,12 @@ export default function Home() {
       setStatus("Results ready");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Search failed";
+      const friendlyMessage = message.includes("Yelp") || message.includes("restaurant search failed")
+        ? "Restaurant search is unavailable right now. Check the Yelp API key or try mock mode."
+        : message;
       setResponse(null);
-      setStatus(message);
+      setStatus("Search needs attention");
+      setSearchError(friendlyMessage);
       console.error(message);
     } finally {
       setIsLoading(false);
@@ -355,6 +386,20 @@ export default function Home() {
         </div>
 
         <form className="search-panel" onSubmit={search}>
+          <div className="provider-row" aria-live="polite">
+            <span className={providers?.restaurants === "yelp" ? "provider-badge live" : "provider-badge"}>
+              <Utensils size={14} />
+              {restaurantProviderLabel}
+            </span>
+            <span>{providers ? `Routing: ${providers.routing} · Geocoding: ${providers.geocoding}` : "Checking providers"}</span>
+          </div>
+
+          {searchError ? (
+            <div className="inline-alert" role="alert">
+              {searchError}
+            </div>
+          ) : null}
+
           <div className="field-row">
             <label>
               <span>Origin</span>

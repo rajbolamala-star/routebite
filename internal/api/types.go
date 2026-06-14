@@ -39,3 +39,10 @@ type SearchResponse struct {
 type GeocodeResponse struct {
 	Results []geocode.Suggestion `json:"results"`
 }
+
+// Providers describes which backing services are active.
+type Providers struct {
+	Restaurants string `json:"restaurants"`
+	Routing     string `json:"routing"`
+	Geocoding   string `json:"geocoding"`
+}

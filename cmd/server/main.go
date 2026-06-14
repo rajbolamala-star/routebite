@@ -27,27 +27,36 @@ func main() {
 
 	// Yelp: real client if key present, mock otherwise.
 	var yelpClient yelp.Client
+	restaurantProvider := "yelp"
 	if yelpKey == "" {
-		log.Println("YELP_API_KEY not set - using mock Yelp client")
+		restaurantProvider = "mock"
+		log.Println("restaurant provider: mock (YELP_API_KEY not set)")
 		yelpClient = yelp.NewMock()
 	} else {
+		log.Println("restaurant provider: yelp")
 		yelpClient = yelp.New(yelpKey)
 	}
 
 	// Routing: OSRM public for real, mock as fallback / for tests.
 	var routeEngine routing.Engine
+	routingProvider := "osrm"
 	if useMockRouting {
-		log.Println("USE_MOCK_ROUTING=true - using mock route engine")
+		routingProvider = "mock"
+		log.Println("routing provider: mock (USE_MOCK_ROUTING=true)")
 		routeEngine = routing.NewMockEngine()
 	} else {
+		log.Println("routing provider: osrm")
 		routeEngine = routing.NewOSRM()
 	}
 
 	var geocodeClient geocode.Client
+	geocodingProvider := "nominatim"
 	if useMockGeocoding {
-		log.Println("USE_MOCK_GEOCODING=true - using mock geocoder")
+		geocodingProvider = "mock"
+		log.Println("geocoding provider: mock (USE_MOCK_GEOCODING=true)")
 		geocodeClient = geocode.NewMock()
 	} else {
+		log.Println("geocoding provider: nominatim")
 		geocodeClient = geocode.NewNominatim()
 	}
 
@@ -55,7 +64,11 @@ func main() {
 	c := cache.New(5 * time.Minute)
 	go purgeLoop(c)
 
-	h := api.NewHandler(yelpClient, routeEngine, geocodeClient, c)
+	h := api.NewHandler(yelpClient, routeEngine, geocodeClient, c, api.Providers{
+		Restaurants: restaurantProvider,
+		Routing:     routingProvider,
+		Geocoding:   geocodingProvider,
+	})
 
 	gin.SetMode(getEnv("GIN_MODE", "release"))
 	r := gin.New()
@@ -70,6 +83,7 @@ func main() {
 	{
 		v1.POST("/search", h.Search)
 		v1.GET("/geocode", h.Geocode)
+		v1.GET("/providers", h.Providers)
 		v1.GET("/health", h.Health)
 	}
 	r.GET("/health", h.Health) // also at root for load balancers

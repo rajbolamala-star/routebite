@@ -1,4 +1,4 @@
-.PHONY: help build test run run-geocode run-real web-install web-dev web-build web-lint web-typecheck docker-up docker-down deploy clean
+.PHONY: help build test run run-geocode run-yelp run-real web-install web-dev web-build web-lint web-typecheck docker-up docker-down deploy clean
 
 help:
 	@echo "RouteBite — available targets:"
@@ -6,6 +6,7 @@ help:
 	@echo "  test         - Run unit tests"
 	@echo "  run          - Run locally (mock providers, no API key required)"
 	@echo "  run-geocode  - Run with real address lookup and mock food/routing"
+	@echo "  run-yelp     - Run with live Yelp and mock routing/geocoding"
 	@echo "  run-real     - Run with real Yelp + OSRM (requires YELP_API_KEY)"
 	@echo "  web-install  - Install Next.js app dependencies"
 	@echo "  web-dev      - Run the Next.js app at localhost:3000"
@@ -26,6 +27,9 @@ run: build
 
 run-geocode: build
 	USE_MOCK_ROUTING=true ./bin/routebite
+
+run-yelp: build
+	USE_MOCK_ROUTING=true USE_MOCK_GEOCODING=true ./bin/routebite
 
 run-real: build
 	USE_MOCK_ROUTING=false ./bin/routebite

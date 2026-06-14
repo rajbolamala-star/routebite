@@ -230,6 +230,42 @@ h3 {
   gap: 16px;
 }
 
+.provider-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.provider-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border-radius: 999px;
+  color: var(--accent-strong);
+  background: rgba(15, 118, 110, 0.1);
+}
+
+.provider-badge.live {
+  color: #075985;
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.inline-alert {
+  border: 1px solid rgba(225, 29, 72, 0.22);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #9f1239;
+  background: rgba(225, 29, 72, 0.08);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 label {
   display: grid;
   gap: 7px;
