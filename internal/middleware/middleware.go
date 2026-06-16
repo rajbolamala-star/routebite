@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,8 @@ const (
 	requestIDKey    = "request_id"
 )
 
+type requestIDContextKey struct{}
+
 // RequestID attaches a stable request ID to the Gin context and response.
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -25,6 +28,7 @@ func RequestID() gin.HandlerFunc {
 			requestID = newRequestID()
 		}
 		c.Set(requestIDKey, requestID)
+		c.Request = c.Request.WithContext(ContextWithRequestID(c.Request.Context(), requestID))
 		c.Writer.Header().Set(RequestIDHeader, requestID)
 		c.Next()
 	}
@@ -38,6 +42,17 @@ func GetRequestID(c *gin.Context) string {
 		}
 	}
 	return c.GetHeader(RequestIDHeader)
+}
+
+func ContextWithRequestID(ctx context.Context, requestID string) context.Context {
+	return context.WithValue(ctx, requestIDContextKey{}, requestID)
+}
+
+func RequestIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(requestIDContextKey{}).(string); ok {
+		return v
+	}
+	return ""
 }
 
 // StructuredLogger emits one JSON log per request. Easy to ship to any

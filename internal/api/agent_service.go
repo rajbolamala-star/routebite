@@ -80,7 +80,7 @@ func (h *Handler) runAgentSearch(ctx context.Context, req AgentSearchRequest) (A
 }
 
 func (h *Handler) geocodeOne(ctx context.Context, place string) (geocode.Suggestion, error) {
-	results, err := h.geocode.Search(ctx, place, 1)
+	results, err := h.cachedGeocode(ctx, place, 1)
 	if err != nil {
 		return geocode.Suggestion{}, err
 	}

@@ -9,8 +9,8 @@ import (
 // Yelp + OSRM quotas — repeated identical requests are common when a driver
 // re-runs the same search.
 //
-// Pluggable: implement the same Get/Set interface against Redis or Postgres
-// when traffic warrants it.
+// RedisCache in this package is the shared JSON cache; TTL remains a small
+// process-local byte cache for very hot restaurant searches.
 type TTL struct {
 	mu      sync.RWMutex
 	entries map[string]entry

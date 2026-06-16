@@ -243,6 +243,45 @@ Run without PostgreSQL:
 DB_ENABLED=false go run ./cmd/server
 ```
 
+## Optional Redis caching
+
+RouteBite can use Redis as a shared cache for repeated geocoding and restaurant
+searches. This reduces repeated calls to external providers like Nominatim and
+Yelp, improves response speed, and keeps local/mock mode working the same way.
+
+Redis is disabled by default:
+
+```bash
+REDIS_ENABLED=false go run ./cmd/server
+```
+
+Run Redis locally:
+
+```bash
+docker run --rm -p 6379:6379 redis:7
+```
+
+Enable Redis caching:
+
+```bash
+export REDIS_ENABLED=true
+export REDIS_ADDR=localhost:6379
+export REDIS_DB=0
+export CACHE_TTL_MINUTES=15
+go run ./cmd/server
+```
+
+Optional password:
+
+```bash
+export REDIS_PASSWORD=your_redis_password
+```
+
+Cached data uses stable, non-secret keys such as `geocode:kingsport-tn:limit:1`
+and `restaurants:soup:25.9290:-80.1690:radius:5000:open:true`. Cache failures
+are failure-safe: RouteBite logs `cache_error`, calls the real provider, and
+continues serving the API response.
+
 ## Getting started
 
 ```bash

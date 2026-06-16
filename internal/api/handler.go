@@ -2,18 +2,19 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dheerajb/routebite/internal/cache"
 	"github.com/dheerajb/routebite/internal/geocode"
 	"github.com/dheerajb/routebite/internal/history"
+	"github.com/dheerajb/routebite/internal/middleware"
 	"github.com/dheerajb/routebite/internal/routing"
 	"github.com/dheerajb/routebite/internal/scoring"
 	"github.com/dheerajb/routebite/internal/voice"
@@ -47,6 +48,8 @@ type Handler struct {
 	route     routing.Engine
 	geocode   geocode.Client
 	cache     *cache.TTL
+	shared    cache.Cache
+	cacheTTL  time.Duration
 	weights   scoring.Weights
 	providers Providers
 	agent     agentParser
@@ -63,12 +66,25 @@ func WithAgentSearchHistory(repo history.Repository) HandlerOption {
 	}
 }
 
+func WithExternalCache(shared cache.Cache, ttl time.Duration) HandlerOption {
+	return func(h *Handler) {
+		if shared != nil {
+			h.shared = shared
+		}
+		if ttl > 0 {
+			h.cacheTTL = ttl
+		}
+	}
+}
+
 func NewHandler(y yelp.Client, r routing.Engine, g geocode.Client, c *cache.TTL, providers Providers, opts ...HandlerOption) *Handler {
 	h := &Handler{
 		yelp:      y,
 		route:     r,
 		geocode:   g,
 		cache:     c,
+		shared:    cache.NoopCache{},
+		cacheTTL:  15 * time.Minute,
 		weights:   scoring.Default,
 		providers: providers,
 		agent:     ruleBasedAgentParser{},
@@ -204,7 +220,7 @@ func (h *Handler) Geocode(c *gin.Context) {
 		return
 	}
 
-	results, err := h.geocode.Search(c.Request.Context(), q, limit)
+	results, err := h.cachedGeocode(c.Request.Context(), q, limit)
 	if err != nil {
 		writeError(c, http.StatusBadGateway, "geocoding failed: "+err.Error())
 		return
@@ -220,7 +236,21 @@ func (h *Handler) Providers(c *gin.Context) {
 // fetchYelp wraps the Yelp call with a content-addressed cache so identical
 // searches don't burn quota.
 func (h *Handler) fetchYelp(ctx context.Context, term string, center routing.Point, radius int, openNow bool) ([]yelp.Business, error) {
-	key := cacheKey(term, center, radius, openNow)
+	key := restaurantCacheKey(term, center, radius, openNow)
+
+	var sharedOut []yelp.Business
+	if hit, err := h.shared.Get(ctx, key, &sharedOut); err != nil {
+		h.logCacheEvent(ctx, "cache_error", "restaurants", key, err)
+	} else if hit {
+		h.logCacheEvent(ctx, "cache_hit", "restaurants", key, nil)
+		yelpCalls.WithLabelValues("hit").Inc()
+		if raw, err := json.Marshal(sharedOut); err == nil {
+			h.cache.Set(key, raw)
+		}
+		return sharedOut, nil
+	} else {
+		h.logCacheEvent(ctx, "cache_miss", "restaurants", key, nil)
+	}
 
 	if raw, hit := h.cache.Get(key); hit {
 		yelpCalls.WithLabelValues("hit").Inc()
@@ -247,19 +277,68 @@ func (h *Handler) fetchYelp(ctx context.Context, term string, center routing.Poi
 	if raw, err := json.Marshal(bs); err == nil {
 		h.cache.Set(key, raw)
 	}
+	if err := h.shared.Set(ctx, key, bs, h.cacheTTL); err != nil {
+		h.logCacheEvent(ctx, "cache_error", "restaurants", key, err)
+	}
 	return bs, nil
 }
 
-func cacheKey(term string, center routing.Point, radius int, openNow bool) string {
-	h := sha256.New()
-	_, _ = h.Write([]byte(term))
-	_, _ = h.Write([]byte{byte(int(center.Lat * 100))})
-	_, _ = h.Write([]byte{byte(int(center.Lng * 100))})
-	_, _ = h.Write([]byte{byte(radius / 100)})
-	if openNow {
-		_, _ = h.Write([]byte{1})
+func (h *Handler) cachedGeocode(ctx context.Context, q string, limit int) ([]geocode.Suggestion, error) {
+	key := geocodeCacheKey(q, limit)
+	var cached []geocode.Suggestion
+	if hit, err := h.shared.Get(ctx, key, &cached); err != nil {
+		h.logCacheEvent(ctx, "cache_error", "geocode", key, err)
+	} else if hit {
+		h.logCacheEvent(ctx, "cache_hit", "geocode", key, nil)
+		return cached, nil
+	} else {
+		h.logCacheEvent(ctx, "cache_miss", "geocode", key, nil)
 	}
-	return hex.EncodeToString(h.Sum(nil))[:16]
+
+	results, err := h.geocode.Search(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.shared.Set(ctx, key, results, h.cacheTTL); err != nil {
+		h.logCacheEvent(ctx, "cache_error", "geocode", key, err)
+	}
+	return results, nil
+}
+
+func geocodeCacheKey(q string, limit int) string {
+	if limit <= 0 || limit > 8 {
+		limit = 5
+	}
+	return fmt.Sprintf("geocode:%s:limit:%d", normalizeCachePart(q), limit)
+}
+
+func restaurantCacheKey(term string, center routing.Point, radius int, openNow bool) string {
+	return fmt.Sprintf("restaurants:%s:%.4f:%.4f:radius:%d:open:%t",
+		normalizeCachePart(term), center.Lat, center.Lng, radius, openNow)
+}
+
+func normalizeCachePart(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.Join(strings.Fields(s), "-")
+	if s == "" {
+		return "any"
+	}
+	return s
+}
+
+func (h *Handler) logCacheEvent(ctx context.Context, event string, source string, key string, err error) {
+	entry := map[string]any{
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+		"event":      event,
+		"source":     source,
+		"cache_key":  key,
+		"request_id": middleware.RequestIDFromContext(ctx),
+	}
+	if err != nil {
+		entry["error"] = err.Error()
+	}
+	raw, _ := json.Marshal(entry)
+	log.Println(string(raw))
 }
 
 func applyDefaults(r *SearchRequest) {

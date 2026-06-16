@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -63,18 +65,22 @@ func main() {
 		geocodeClient = geocode.NewNominatim()
 	}
 
-	// 5-minute cache for identical Yelp queries.
-	c := cache.New(5 * time.Minute)
+	cacheTTL := readCacheTTL()
+	// Local in-memory cache for repeated identical queries inside this process.
+	c := cache.New(cacheTTL)
 	go purgeLoop(c)
 
 	historyRepo, closeHistoryRepo := openHistoryRepository()
 	defer closeHistoryRepo()
 
+	externalCache, closeExternalCache := openExternalCache()
+	defer closeExternalCache()
+
 	h := api.NewHandler(yelpClient, routeEngine, geocodeClient, c, api.Providers{
 		Restaurants: restaurantProvider,
 		Routing:     routingProvider,
 		Geocoding:   geocodingProvider,
-	}, api.WithAgentSearchHistory(historyRepo))
+	}, api.WithAgentSearchHistory(historyRepo), api.WithExternalCache(externalCache, cacheTTL))
 
 	gin.SetMode(getEnv("GIN_MODE", "release"))
 	r := gin.New()
@@ -137,6 +143,14 @@ func getEnv(k, d string) string {
 	return d
 }
 
+func readCacheTTL() time.Duration {
+	minutes, err := strconv.Atoi(getEnv("CACHE_TTL_MINUTES", "15"))
+	if err != nil || minutes <= 0 {
+		minutes = 15
+	}
+	return time.Duration(minutes) * time.Minute
+}
+
 func openHistoryRepository() (history.Repository, func()) {
 	if os.Getenv("DB_ENABLED") != "true" {
 		log.Println("agent search persistence: disabled (DB_ENABLED=false)")
@@ -169,5 +183,35 @@ func openHistoryRepository() (history.Repository, func()) {
 	log.Println("agent search persistence: postgres")
 	return history.NewPostgresRepository(db), func() {
 		_ = db.Close()
+	}
+}
+
+func openExternalCache() (cache.Cache, func()) {
+	if os.Getenv("REDIS_ENABLED") != "true" {
+		log.Println("redis cache: disabled (REDIS_ENABLED=false)")
+		return cache.NoopCache{}, func() {}
+	}
+
+	db, err := strconv.Atoi(getEnv("REDIS_DB", "0"))
+	if err != nil || db < 0 {
+		db = 0
+	}
+	client := redis.NewClient(&redis.Options{
+		Addr:     getEnv("REDIS_ADDR", "localhost:6379"),
+		Password: os.Getenv("REDIS_PASSWORD"),
+		DB:       db,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		log.Printf("redis cache: disabled (ping failed: %v)", err)
+		_ = client.Close()
+		return cache.NoopCache{}, func() {}
+	}
+
+	log.Println("redis cache: enabled")
+	return cache.NewRedisCache(client), func() {
+		_ = client.Close()
 	}
 }
