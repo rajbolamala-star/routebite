@@ -64,6 +64,23 @@ Returns a compact, driver-safe recommendation response:
 ```json
 {
   "summary": "Best option is Saffron Indian Kitchen, about 6 minutes off your route, rated 4.5 stars and currently open.",
+  "best_pick": {
+    "name": "Saffron Indian Kitchen",
+    "rating": 4.5,
+    "detour_minutes": 6,
+    "open_now": true,
+    "address": "123 Main St, Nashville, TN",
+    "phone": "+16155551212",
+    "reason": "Highest RouteBite Score (84/100): low detour, highly rated, currently open.",
+    "routebite_score": 84,
+    "score_breakdown": {
+      "detour_score": 40,
+      "rating_score": 90,
+      "open_now_score": 100,
+      "preference_match_score": 100,
+      "convenience_score": 100
+    }
+  },
   "restaurants": [
     {
       "name": "Saffron Indian Kitchen",
@@ -72,7 +89,15 @@ Returns a compact, driver-safe recommendation response:
       "open_now": true,
       "address": "123 Main St, Nashville, TN",
       "phone": "+16155551212",
-      "reason": "Low detour, highly rated, currently open"
+      "reason": "Low detour, highly rated, currently open",
+      "routebite_score": 84,
+      "score_breakdown": {
+        "detour_score": 40,
+        "rating_score": 90,
+        "open_now_score": 100,
+        "preference_match_score": 100,
+        "convenience_score": 100
+      }
     }
   ]
 }
@@ -111,6 +136,8 @@ route/restaurant backend.
 
 ## Scoring formula
 
+Core restaurant ranking:
+
 ```
 score = rating_normalized       * 0.4
       + review_count_normalized * 0.2
@@ -118,7 +145,22 @@ score = rating_normalized       * 0.4
       + (open_now ? 0.1 : 0)
 ```
 
-Mimics the tradeoff a driver makes mentally: how good is it, vs how much does it cost me to stop?
+Agent responses also include a **RouteBite Score** from 0 to 100. This is a
+simple decision score for the final recommendation layer:
+
+```
+routebite_score =
+    detour_score           * 0.35
+  + rating_score           * 0.25
+  + open_now_score         * 0.15
+  + preference_match_score * 0.15
+  + convenience_score      * 0.10
+```
+
+`best_pick` is the highest RouteBite Score after tie-breaking by lower detour
+and then higher rating. This mimics the tradeoff a driver makes mentally: how
+good is it, how closely does it match what I asked for, and how much does it
+cost me to stop?
 
 ## Tech stack
 

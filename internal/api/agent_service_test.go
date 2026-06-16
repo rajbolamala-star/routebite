@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/dheerajb/routebite/internal/history"
 	"github.com/dheerajb/routebite/internal/middleware"
 	"github.com/dheerajb/routebite/internal/routing"
+	"github.com/dheerajb/routebite/internal/scoring"
 	"github.com/dheerajb/routebite/internal/yelp"
 	"github.com/gin-gonic/gin"
 )
@@ -128,6 +130,24 @@ func TestAgentSearch_StructuredFields(t *testing.T) {
 	}
 	if got.Restaurants[0].Reason == "" {
 		t.Fatal("first restaurant reason is empty")
+	}
+	if got.Restaurants[0].RouteBiteScore <= 0 {
+		t.Fatalf("RouteBiteScore = %d, want positive", got.Restaurants[0].RouteBiteScore)
+	}
+	if got.BestPick == nil {
+		t.Fatal("BestPick is nil")
+	}
+	if len(got.Restaurants) == 0 {
+		t.Fatal("restaurants is empty when best_pick exists")
+	}
+	if got.BestPick.Name != got.Restaurants[0].Name {
+		t.Fatalf("best pick = %q, first restaurant = %q", got.BestPick.Name, got.Restaurants[0].Name)
+	}
+	if got.BestPick.RouteBiteScore != got.Restaurants[0].RouteBiteScore {
+		t.Fatalf("best pick score = %d, first restaurant score = %d", got.BestPick.RouteBiteScore, got.Restaurants[0].RouteBiteScore)
+	}
+	if got.Restaurants[0].ScoreBreakdown == (ScoreBreakdown{}) {
+		t.Fatal("first restaurant score_breakdown is empty")
 	}
 }
 
@@ -261,6 +281,70 @@ func TestAgentSearch_HistoryFailureDoesNotBreakResponse(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRouteBiteScoreBreakdown(t *testing.T) {
+	result := scoring.Restaurant{
+		Name:         "Saffron Indian Kitchen",
+		Rating:       4.5,
+		ExtraMinutes: 2,
+		IsOpenNow:    true,
+		Address:      "123 Main St",
+		Phone:        "+16155551212",
+		Cuisine:      []string{"Indian"},
+	}
+
+	got := routeBiteScoreBreakdown(result, "Indian food", 10)
+	if got.DetourScore != 80 {
+		t.Fatalf("DetourScore = %d, want 80", got.DetourScore)
+	}
+	if got.RatingScore != 90 {
+		t.Fatalf("RatingScore = %d, want 90", got.RatingScore)
+	}
+	if got.OpenNowScore != 100 {
+		t.Fatalf("OpenNowScore = %d, want 100", got.OpenNowScore)
+	}
+	if got.PreferenceMatchScore != 100 {
+		t.Fatalf("PreferenceMatchScore = %d, want 100", got.PreferenceMatchScore)
+	}
+	if got.ConvenienceScore != 100 {
+		t.Fatalf("ConvenienceScore = %d, want 100", got.ConvenienceScore)
+	}
+
+	if score := routeBiteScore(got); score != 91 {
+		t.Fatalf("RouteBiteScore = %d, want 91", score)
+	}
+}
+
+func TestBestPickUsesHighestRouteBiteScore(t *testing.T) {
+	restaurants := []AgentRestaurant{
+		{
+			Name:           "Far But Famous",
+			Rating:         4.9,
+			DetourMinutes:  9,
+			OpenNow:        true,
+			RouteBiteScore: 72,
+		},
+		{
+			Name:           "Close Curry",
+			Rating:         4.4,
+			DetourMinutes:  3,
+			OpenNow:        true,
+			RouteBiteScore: 90,
+		},
+	}
+
+	sortAgentRestaurants(restaurants)
+	got := bestAgentPick(restaurants)
+	if got == nil {
+		t.Fatal("best pick is nil")
+	}
+	if got.Name != "Close Curry" {
+		t.Fatalf("best pick = %q, want Close Curry", got.Name)
+	}
+	if !strings.Contains(got.Reason, "Highest RouteBite Score (90/100)") {
+		t.Fatalf("reason = %q, want RouteBite Score explanation", got.Reason)
 	}
 }
 

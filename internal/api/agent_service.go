@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"fmt"
+	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -65,11 +67,14 @@ func (h *Handler) runAgentSearch(ctx context.Context, req AgentSearchRequest) (A
 
 	restaurants := make([]AgentRestaurant, 0, len(searchResp.Results))
 	for _, result := range searchResp.Results {
-		restaurants = append(restaurants, toAgentRestaurant(result))
+		restaurants = append(restaurants, toAgentRestaurant(result, plan.Preference, plan.MaxDetourMinutes))
 	}
+	sortAgentRestaurants(restaurants)
+	bestPick := bestAgentPick(restaurants)
 
 	return AgentSearchResponse{
 		Summary:     agentSummary(restaurants, plan.Preference),
+		BestPick:    bestPick,
 		Restaurants: restaurants,
 	}, plan, nil
 }
@@ -188,35 +193,163 @@ func cleanPlace(place string) string {
 	return strings.TrimSpace(place)
 }
 
-func toAgentRestaurant(result scoring.Restaurant) AgentRestaurant {
-	return AgentRestaurant{
-		Name:          result.Name,
-		Rating:        result.Rating,
-		DetourMinutes: result.ExtraMinutes,
-		OpenNow:       result.IsOpenNow,
-		Address:       result.Address,
-		Phone:         result.Phone,
-		Reason:        agentReason(result),
+func toAgentRestaurant(result scoring.Restaurant, preference string, maxDetourMinutes int) AgentRestaurant {
+	breakdown := routeBiteScoreBreakdown(result, preference, maxDetourMinutes)
+	routeBiteScore := routeBiteScore(breakdown)
+	restaurant := AgentRestaurant{
+		Name:           result.Name,
+		Rating:         result.Rating,
+		DetourMinutes:  result.ExtraMinutes,
+		OpenNow:        result.IsOpenNow,
+		Address:        result.Address,
+		Phone:          result.Phone,
+		RouteBiteScore: routeBiteScore,
+		ScoreBreakdown: breakdown,
+	}
+	restaurant.Reason = agentReason(restaurant)
+	return restaurant
+}
+
+func routeBiteScoreBreakdown(result scoring.Restaurant, preference string, maxDetourMinutes int) ScoreBreakdown {
+	return ScoreBreakdown{
+		DetourScore:          detourScore(result.ExtraMinutes, maxDetourMinutes),
+		RatingScore:          ratingScore(result.Rating),
+		OpenNowScore:         openNowScore(result.IsOpenNow),
+		PreferenceMatchScore: preferenceMatchScore(result, preference),
+		ConvenienceScore:     convenienceScore(result),
 	}
 }
 
-func agentReason(result scoring.Restaurant) string {
+func routeBiteScore(b ScoreBreakdown) int {
+	score := float64(b.DetourScore)*0.35 +
+		float64(b.RatingScore)*0.25 +
+		float64(b.OpenNowScore)*0.15 +
+		float64(b.PreferenceMatchScore)*0.15 +
+		float64(b.ConvenienceScore)*0.10
+	return clampScore(int(math.Round(score)))
+}
+
+func detourScore(detourMinutes int, maxDetourMinutes int) int {
+	if maxDetourMinutes <= 0 {
+		maxDetourMinutes = defaultAgentMaxDetour
+	}
+	if detourMinutes <= 0 {
+		return 100
+	}
+	score := 100 - int(math.Round((float64(detourMinutes)/float64(maxDetourMinutes))*100))
+	return clampScore(score)
+}
+
+func ratingScore(rating float64) int {
+	return clampScore(int(math.Round((rating / 5.0) * 100)))
+}
+
+func openNowScore(openNow bool) int {
+	if openNow {
+		return 100
+	}
+	return 0
+}
+
+func preferenceMatchScore(result scoring.Restaurant, preference string) int {
+	preference = strings.ToLower(strings.TrimSpace(preference))
+	if preference == "" {
+		return 70
+	}
+
+	terms := strings.Fields(preference)
+	if len(terms) == 0 {
+		return 70
+	}
+
+	haystack := strings.ToLower(result.Name + " " + strings.Join(result.Cuisine, " "))
+	matches := 0
+	considered := 0
+	for _, term := range terms {
+		term = strings.Trim(term, ".,!?")
+		if term == "" || term == "food" {
+			continue
+		}
+		considered++
+		if strings.Contains(haystack, term) {
+			matches++
+		}
+	}
+	if considered == 0 {
+		return 70
+	}
+	if matches == 0 {
+		return 60
+	}
+	if matches == considered {
+		return 100
+	}
+	return 80
+}
+
+func convenienceScore(result scoring.Restaurant) int {
+	score := 30
+	if result.Address != "" {
+		score += 35
+	}
+	if result.Phone != "" {
+		score += 35
+	}
+	return clampScore(score)
+}
+
+func clampScore(score int) int {
+	if score < 0 {
+		return 0
+	}
+	if score > 100 {
+		return 100
+	}
+	return score
+}
+
+func sortAgentRestaurants(restaurants []AgentRestaurant) {
+	sort.SliceStable(restaurants, func(i, j int) bool {
+		if restaurants[i].RouteBiteScore != restaurants[j].RouteBiteScore {
+			return restaurants[i].RouteBiteScore > restaurants[j].RouteBiteScore
+		}
+		if restaurants[i].DetourMinutes != restaurants[j].DetourMinutes {
+			return restaurants[i].DetourMinutes < restaurants[j].DetourMinutes
+		}
+		return restaurants[i].Rating > restaurants[j].Rating
+	})
+}
+
+func bestAgentPick(restaurants []AgentRestaurant) *AgentRestaurant {
+	if len(restaurants) == 0 {
+		return nil
+	}
+	best := restaurants[0]
+	best.Reason = bestPickReason(best)
+	return &best
+}
+
+func agentReason(result AgentRestaurant) string {
 	parts := []string{}
-	if result.ExtraMinutes <= 5 {
+	if result.DetourMinutes <= 5 {
 		parts = append(parts, "low detour")
 	} else {
-		parts = append(parts, fmt.Sprintf("%d minute detour", result.ExtraMinutes))
+		parts = append(parts, fmt.Sprintf("%d minute detour", result.DetourMinutes))
 	}
 	if result.Rating >= 4.3 {
 		parts = append(parts, "highly rated")
 	}
-	if result.IsOpenNow {
+	if result.OpenNow {
 		parts = append(parts, "currently open")
 	}
 	if len(parts) == 0 {
 		return "Balanced route convenience and restaurant quality"
 	}
 	return sentenceCase(strings.Join(parts, ", "))
+}
+
+func bestPickReason(result AgentRestaurant) string {
+	return fmt.Sprintf("Highest RouteBite Score (%d/100): %s.", result.RouteBiteScore, strings.ToLower(agentReason(result)))
 }
 
 func agentSummary(restaurants []AgentRestaurant, preference string) string {
