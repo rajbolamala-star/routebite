@@ -10,6 +10,7 @@ import (
 
 	"github.com/dheerajb/routebite/internal/cache"
 	"github.com/dheerajb/routebite/internal/geocode"
+	"github.com/dheerajb/routebite/internal/middleware"
 	"github.com/dheerajb/routebite/internal/routing"
 	"github.com/dheerajb/routebite/internal/yelp"
 	"github.com/gin-gonic/gin"
@@ -146,5 +147,38 @@ func TestAgentSearch_MissingRoute(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAgentSearch_ErrorIncludesRequestID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewHandler(
+		yelp.NewMock(),
+		routing.NewMockEngine(),
+		geocode.NewMock(),
+		cache.New(time.Minute),
+		Providers{Restaurants: "mock", Routing: "mock", Geocoding: "mock"},
+	)
+
+	r := gin.New()
+	r.Use(middleware.RequestID())
+	r.POST("/v1/agent/search", h.AgentSearch)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/agent/search", bytes.NewBufferString(`{"preference":"soup"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(middleware.RequestIDHeader, "test-request-id")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	var got ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Error.RequestID != "test-request-id" {
+		t.Fatalf("request_id = %q, want test-request-id", got.Error.RequestID)
 	}
 }

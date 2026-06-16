@@ -73,14 +73,14 @@ func (h *Handler) Search(c *gin.Context) {
 	var req SearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		searchTotal.WithLabelValues("bad_request").Inc()
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	resp, searchErr := h.runSearch(c.Request.Context(), req)
 	if searchErr != nil {
 		searchTotal.WithLabelValues(searchErr.outcome).Inc()
-		c.JSON(searchErr.status, gin.H{"error": searchErr.message})
+		writeError(c, searchErr.status, searchErr.message)
 		return
 	}
 
@@ -189,7 +189,7 @@ func (h *Handler) Geocode(c *gin.Context) {
 
 	results, err := h.geocode.Search(c.Request.Context(), q, limit)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "geocoding failed: " + err.Error()})
+		writeError(c, http.StatusBadGateway, "geocoding failed: "+err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, GeocodeResponse{Results: results})

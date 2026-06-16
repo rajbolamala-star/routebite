@@ -72,7 +72,7 @@ func main() {
 
 	gin.SetMode(getEnv("GIN_MODE", "release"))
 	r := gin.New()
-	r.Use(gin.Recovery(), middleware.StructuredLogger())
+	r.Use(gin.Recovery(), middleware.RequestID(), middleware.StructuredLogger())
 
 	if _, err := os.Stat("./web/out/index.html"); err == nil {
 		r.Static("/_next", "./web/out/_next")

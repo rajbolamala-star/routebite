@@ -143,6 +143,39 @@ Mimics the tradeoff a driver makes mentally: how good is it, vs how much does it
 | `GET`  | `/v1/health` | Health check |
 | `GET`  | `/v1/metrics` | Prometheus metrics |
 
+## Request tracing and logs
+
+Every request gets an `X-Request-ID` response header. If a caller sends an
+`X-Request-ID` header, RouteBite preserves it; otherwise the middleware
+generates one. Error responses include the same `request_id` so logs and client
+reports can be correlated.
+
+Example error shape:
+
+```json
+{
+  "error": {
+    "message": "agent needs a start location",
+    "request_id": "client-request-123"
+  }
+}
+```
+
+The request logger emits one JSON line per request with method, path, status,
+latency, client IP, and request ID:
+
+```json
+{
+  "timestamp": "2026-06-16T00:00:00Z",
+  "method": "POST",
+  "path": "/v1/agent/search",
+  "status": 200,
+  "latency_ms": 42,
+  "client_ip": "127.0.0.1",
+  "request_id": "client-request-123"
+}
+```
+
 ## Getting started
 
 ```bash

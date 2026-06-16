@@ -10,13 +10,13 @@ import (
 func (h *Handler) AgentSearch(c *gin.Context) {
 	var req AgentSearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	resp, searchErr := h.runAgentSearch(c.Request.Context(), req)
 	if searchErr != nil {
-		c.JSON(searchErr.status, gin.H{"error": searchErr.message})
+		writeError(c, searchErr.status, searchErr.message)
 		return
 	}
 
