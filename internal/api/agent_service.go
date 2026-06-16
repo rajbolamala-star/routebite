@@ -42,13 +42,13 @@ var (
 )
 
 type agentParser interface {
-	Parse(AgentSearchRequest) agentPlan
+	Parse(context.Context, AgentSearchRequest) agentPlan
 }
 
 type ruleBasedAgentParser struct{}
 
 func (h *Handler) runAgentSearch(ctx context.Context, req AgentSearchRequest) (AgentSearchResponse, agentPlan, *apiSearchError) {
-	plan := h.agent.Parse(req)
+	plan := h.agent.Parse(ctx, req)
 	if plan.Start == "" {
 		return AgentSearchResponse{}, plan, badRequest("agent needs a start location")
 	}
@@ -93,7 +93,7 @@ func (h *Handler) runAgentSearch(ctx context.Context, req AgentSearchRequest) (A
 		Summary:           agentSummary(restaurants, plan.Preference, matchQuality, plan.MaxDetourMinutes),
 		DriverSafeSummary: driverSafeSummary(restaurants, plan.Preference, matchQuality, plan.MaxDetourMinutes),
 		MatchQuality:      matchQuality,
-		TripIntent:        inferTripIntent(req),
+		TripIntent:        plan.TripIntent,
 		BestPick:          bestPick,
 		Restaurants:       restaurants,
 	}, plan, nil
@@ -116,13 +116,14 @@ type agentPlan struct {
 	Preference       string
 	MaxDetourMinutes int
 	OpenNowOnly      bool
+	TripIntent       string
 }
 
 func parseAgentRequest(req AgentSearchRequest) agentPlan {
-	return ruleBasedAgentParser{}.Parse(req)
+	return ruleBasedAgentParser{}.Parse(context.Background(), req)
 }
 
-func (ruleBasedAgentParser) Parse(req AgentSearchRequest) agentPlan {
+func (ruleBasedAgentParser) Parse(_ context.Context, req AgentSearchRequest) agentPlan {
 	query := strings.TrimSpace(req.Query)
 	plan := agentPlan{
 		Start:            strings.TrimSpace(req.Start),
@@ -130,6 +131,7 @@ func (ruleBasedAgentParser) Parse(req AgentSearchRequest) agentPlan {
 		Preference:       strings.TrimSpace(req.Preference),
 		MaxDetourMinutes: req.MaxDetourMinutes,
 		OpenNowOnly:      true,
+		TripIntent:       inferTripIntent(req),
 	}
 	if req.OpenNowOnly {
 		plan.OpenNowOnly = true
@@ -163,6 +165,7 @@ func (ruleBasedAgentParser) Parse(req AgentSearchRequest) agentPlan {
 
 	plan.MaxDetourMinutes = normalizeDetour(plan.MaxDetourMinutes)
 	plan.Preference = normalizePreference(plan.Preference)
+	plan.TripIntent = normalizeTripIntent(plan.TripIntent)
 	return plan
 }
 
@@ -439,6 +442,23 @@ func inferTripIntent(req AgentSearchRequest) string {
 		return tripIntentCoffee
 	case containsAny(text, "food", "eat", "restaurant", "pizza", "indian", "burger", "taco", "pho", "lunch", "dinner"):
 		return tripIntentFood
+	default:
+		return tripIntentUnknown
+	}
+}
+
+func normalizeTripIntent(intent string) string {
+	switch strings.ToLower(strings.TrimSpace(intent)) {
+	case tripIntentFood:
+		return tripIntentFood
+	case tripIntentSoup:
+		return tripIntentSoup
+	case tripIntentCoffee:
+		return tripIntentCoffee
+	case tripIntentGasFood:
+		return tripIntentGasFood
+	case tripIntentRestroomFood:
+		return tripIntentRestroomFood
 	default:
 		return tripIntentUnknown
 	}

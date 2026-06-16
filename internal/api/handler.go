@@ -77,6 +77,14 @@ func WithExternalCache(shared cache.Cache, ttl time.Duration) HandlerOption {
 	}
 }
 
+func WithAgentParser(parser agentParser) HandlerOption {
+	return func(h *Handler) {
+		if parser != nil {
+			h.agent = parser
+		}
+	}
+}
+
 func NewHandler(y yelp.Client, r routing.Engine, g geocode.Client, c *cache.TTL, providers Providers, opts ...HandlerOption) *Handler {
 	h := &Handler{
 		yelp:      y,

@@ -117,12 +117,12 @@ mobile or voice assistant to read aloud while driving. `trip_intent` is a simple
 classification such as `food`, `soup`, `coffee`, `gas_food`,
 `restroom_food`, or `unknown`.
 
-The first agent version is rule-based by design: it prefers structured fields
+The default agent parser is rule-based by design: it prefers structured fields
 when present, parses simple `from ... to ... want ... under N minutes` queries
 when needed, then reuses the existing geocoding, routing, Yelp, cache, detour
-scoring, and ranking pipeline. The parsing layer is intentionally small so it
-can be swapped for OpenAI, Ollama, or another LLM later without rewriting the
-route/restaurant backend.
+scoring, and ranking pipeline. An optional Ollama parser can be enabled for
+local LLM extraction, but it always falls back to the rule-based parser on
+errors, invalid JSON, or missing required fields.
 
 ## Architecture
 
@@ -183,8 +183,8 @@ cost me to stop?
 - **Web app:** Next.js, React, TypeScript
 - **Restaurant data:** Yelp Fusion (free tier — 5000 calls/day)
 - **Routing:** OSRM public demo for MVP (swap for Mapbox / Google Routes for production)
-- **Voice parser:** keyword + intent extractor (pluggable for OpenAI / Whisper later)
-- **Cache:** In-memory TTL cache (Postgres-ready interface for later persistence)
+- **Agent parser:** rule-based by default, optional Ollama local LLM parser
+- **Cache:** In-memory TTL cache plus optional Redis shared cache
 - **Observability:** Prometheus metrics
 - **Deploy:** Docker, docker-compose, Kubernetes, Fly.io-ready
 
@@ -295,6 +295,45 @@ Cached data uses stable, non-secret keys such as `geocode:kingsport-tn:limit:1`
 and `restaurants:soup:25.9290:-80.1690:radius:5000:open:true`. Cache failures
 are failure-safe: RouteBite logs `cache_error`, calls the real provider, and
 continues serving the API response.
+
+## Optional Ollama agent parser
+
+RouteBite can use a local Ollama model to extract route-agent fields from the
+natural language query:
+
+- `start`
+- `destination`
+- `preference`
+- `max_detour_minutes`
+- `trip_intent`
+
+It is disabled by default:
+
+```bash
+OLLAMA_ENABLED=false go run ./cmd/server
+```
+
+Run Ollama locally:
+
+```bash
+ollama serve
+ollama pull llama3.2:3b
+```
+
+Enable the Ollama parser:
+
+```bash
+export OLLAMA_ENABLED=true
+export OLLAMA_BASE_URL=http://localhost:11434
+export OLLAMA_MODEL=llama3.2:3b
+export OLLAMA_TIMEOUT_SECONDS=5
+go run ./cmd/server
+```
+
+Fallback behavior is intentional: if Ollama is unavailable, times out, returns
+invalid JSON, or misses required fields, RouteBite logs the event and uses the
+rule-based parser. The recommendation endpoint should still work even when the
+local LLM is down.
 
 ## Getting started
 

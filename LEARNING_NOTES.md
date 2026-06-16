@@ -201,10 +201,13 @@ Important API detail:
 
 ## 5. How the Agent Parser Works
 
-The current agent parser is rule-based. It does not call OpenAI, Ollama, or any
-LLM yet.
+RouteBite has two parser modes:
 
-It works like this:
+1. **Rule-based parser:** default, deterministic, no external dependency.
+2. **Ollama parser:** optional local LLM parser that tries to extract better
+   structured fields from natural language.
+
+The rule-based parser works like this:
 
 1. Prefer structured fields if they exist.
 2. If fields are missing, inspect the natural language `query`.
@@ -215,6 +218,27 @@ It works like this:
    - maximum detour minutes
 4. Normalize values.
 5. Apply defaults.
+
+The optional Ollama parser asks a local model to return JSON with:
+
+```json
+{
+  "start": "",
+  "destination": "",
+  "preference": "",
+  "max_detour_minutes": 0,
+  "trip_intent": "unknown"
+}
+```
+
+Ollama is useful for more flexible language, but it is not allowed to break the
+API. RouteBite falls back to the rule-based parser when:
+
+- Ollama is disabled.
+- Ollama is not running.
+- Ollama times out.
+- Ollama returns invalid JSON.
+- Ollama omits required fields.
 
 Example query:
 
@@ -235,14 +259,16 @@ Why this is a good first version:
 
 - It is deterministic.
 - It is easy to test.
-- It keeps the project useful without an LLM dependency.
-- It is behind an interface, so it can be replaced later.
+- It keeps the project useful even without an LLM dependency.
+- Ollama is behind the same parser interface.
+- The fallback keeps `/v1/agent/search` reliable.
 
 Interview explanation:
 
-> "I started with a rule-based parser because it is predictable and testable.
-> The parser is behind an interface, so an OpenAI or Ollama parser can be added
-> later without rewriting the routing and recommendation pipeline."
+> "I started with a rule-based parser because it is predictable and testable,
+> then added an optional Ollama parser behind the same interface. If Ollama
+> fails or returns bad JSON, RouteBite falls back to the rule-based parser, so
+> the recommendation endpoint remains reliable."
 
 ## 6. How Geocoding, Routing, and Restaurant Search Fit In
 
@@ -701,33 +727,47 @@ export CACHE_TTL_MINUTES=15
 go run ./cmd/server
 ```
 
+Run with Ollama parser:
+
+```bash
+ollama serve
+ollama pull llama3.2:3b
+
+export OLLAMA_ENABLED=true
+export OLLAMA_BASE_URL=http://localhost:11434
+export OLLAMA_MODEL=llama3.2:3b
+export OLLAMA_TIMEOUT_SECONDS=5
+go run ./cmd/server
+```
+
 ## 16. How to Explain the Full Request Flow in an Interview
 
 Short version:
 
 > "RouteBite receives a natural language or structured route request, parses it
-> into a search plan, geocodes the route, gets routing data, searches
-> restaurants near the route, calculates detour cost, scores recommendations,
-> returns a best pick, logs the request with a request ID, optionally caches
-> repeated external results in Redis, and optionally stores the agent search in
-> PostgreSQL."
+> into a search plan using either the rule-based parser or optional Ollama
+> parser, geocodes the route, gets routing data, searches restaurants near the
+> route, calculates detour cost, scores recommendations, returns a best pick,
+> logs the request with a request ID, optionally caches repeated external
+> results in Redis, and optionally stores the agent search in PostgreSQL."
 
 Detailed version:
 
 > "The API starts in Gin. Middleware adds a request ID so logs and errors can
 > be correlated. The agent handler validates the JSON request and passes it to
-> the agent service. The rule-based parser prefers structured fields but can
-> parse simple natural language like 'from X to Y and want pizza under 10
-> minutes.' Then the service geocodes the locations, calculates a route, fetches
-> restaurants near the route, filters by max detour, and ranks candidates. The
-> agent layer adds RouteBite Score, chooses best_pick, and returns a
-> voice-friendly summary. Optional Redis caching reduces repeated geocoding and
-> restaurant calls. Optional PostgreSQL history saves successful searches, but
-> failures do not break the main response."
+> the agent service. The parser prefers structured fields. If Ollama is
+> enabled, it asks the local model for JSON fields; if that fails, the
+> rule-based parser handles simple natural language like 'from X to Y and want
+> pizza under 10 minutes.' Then the service geocodes the locations, calculates a
+> route, fetches restaurants near the route, filters by max detour, and ranks
+> candidates. The agent layer adds RouteBite Score, chooses best_pick, and
+> returns a voice-friendly summary. Optional Redis caching reduces repeated
+> geocoding and restaurant calls. Optional PostgreSQL history saves successful
+> searches, but failures do not break the main response."
 
 Strong technical points:
 
-- interface-based parser design
+- interface-based parser design with Ollama fallback
 - mockable external dependencies
 - optional Redis and PostgreSQL
 - failure-safe infrastructure
@@ -760,15 +800,13 @@ How this helps in interviews:
 
 Good next steps:
 
-### Ollama or OpenAI Parser
-
-Replace or augment the rule-based parser with an LLM-backed parser.
+### OpenAI Parser
 
 Important idea:
 
 - Keep the existing `agentParser` interface.
-- Add a new implementation.
-- Fall back to rule-based parsing if the LLM fails.
+- Add an OpenAI implementation beside the rule-based and Ollama parsers.
+- Keep rule-based fallback if the LLM fails.
 
 ### Auth
 
