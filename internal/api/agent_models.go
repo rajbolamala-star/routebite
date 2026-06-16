@@ -14,9 +14,12 @@ type AgentSearchRequest struct {
 // AgentSearchResponse is intentionally compact and voice-friendly for driver
 // assistant clients.
 type AgentSearchResponse struct {
-	Summary     string            `json:"summary"`
-	BestPick    *AgentRestaurant  `json:"best_pick,omitempty"`
-	Restaurants []AgentRestaurant `json:"restaurants"`
+	Summary           string            `json:"summary"`
+	DriverSafeSummary string            `json:"driver_safe_summary"`
+	MatchQuality      string            `json:"match_quality"`
+	TripIntent        string            `json:"trip_intent"`
+	BestPick          *AgentRestaurant  `json:"best_pick,omitempty"`
+	Restaurants       []AgentRestaurant `json:"restaurants"`
 }
 
 // ScoreBreakdown explains the 0-100 RouteBite Score in interview-friendly,
@@ -37,6 +40,8 @@ type AgentRestaurant struct {
 	OpenNow        bool           `json:"open_now"`
 	Address        string         `json:"address"`
 	Phone          string         `json:"phone"`
+	TapToCall      string         `json:"tap_to_call,omitempty"`
+	OpenInMapsURL  string         `json:"open_in_maps_url,omitempty"`
 	Reason         string         `json:"reason"`
 	RouteBiteScore int            `json:"routebite_score"`
 	ScoreBreakdown ScoreBreakdown `json:"score_breakdown"`

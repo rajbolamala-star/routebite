@@ -130,7 +130,8 @@ Step-by-step flow:
 10. Ranking keeps the best practical restaurants.
 11. RouteBite Score explains each recommendation.
 12. `best_pick` selects the highest-scoring option.
-13. The response returns `summary`, `best_pick`, and `restaurants`.
+13. The response returns `summary`, `driver_safe_summary`, `match_quality`,
+    `trip_intent`, `best_pick`, and `restaurants`.
 14. If PostgreSQL is enabled, RouteBite saves the request summary.
 15. If Redis is enabled, repeated geocoding/restaurant lookups can be cached.
 
@@ -139,6 +140,9 @@ Response shape:
 ```json
 {
   "summary": "Best option is Saffron Indian Kitchen, about 6 minutes off your route, rated 4.5 stars and currently open.",
+  "driver_safe_summary": "Saffron Indian Kitchen is the best stop. 6 minute detour. 4.5 stars. Want to call?",
+  "match_quality": "strong_match",
+  "trip_intent": "food",
   "best_pick": {
     "name": "Saffron Indian Kitchen",
     "rating": 4.5,
@@ -146,6 +150,8 @@ Response shape:
     "open_now": true,
     "address": "123 Main St, Nashville, TN",
     "phone": "+16155551212",
+    "tap_to_call": "tel:+16155551212",
+    "open_in_maps_url": "https://www.google.com/maps/search/?api=1&query=123+Main+St%2C+Nashville%2C+TN",
     "reason": "Highest RouteBite Score (84/100): low detour, highly rated, currently open.",
     "routebite_score": 84,
     "score_breakdown": {
@@ -164,6 +170,8 @@ Response shape:
       "open_now": true,
       "address": "123 Main St, Nashville, TN",
       "phone": "+16155551212",
+      "tap_to_call": "tel:+16155551212",
+      "open_in_maps_url": "https://www.google.com/maps/search/?api=1&query=123+Main+St%2C+Nashville%2C+TN",
       "reason": "Low detour, highly rated, currently open",
       "routebite_score": 84,
       "score_breakdown": {
@@ -184,13 +192,22 @@ Important API detail:
 - `restaurants` still contains the list of top recommendations.
 - Existing fields like `name`, `rating`, `detour_minutes`, `open_now`,
   `address`, `phone`, and `reason` remain available.
+- `driver_safe_summary` is short enough for a phone or voice assistant to read.
+- `match_quality` tells whether the recommendation is a `strong_match`,
+  `weak_match`, or `no_match`.
+- `trip_intent` is a simple label such as `food`, `soup`, `coffee`,
+  `gas_food`, `restroom_food`, or `unknown`.
+- `tap_to_call` and `open_in_maps_url` make each recommendation actionable.
 
 ## 5. How the Agent Parser Works
 
-The current agent parser is rule-based. It does not call OpenAI, Ollama, or any
-LLM yet.
+RouteBite has two parser modes:
 
-It works like this:
+1. **Rule-based parser:** default, deterministic, no external dependency.
+2. **Ollama parser:** optional local LLM parser that tries to extract better
+   structured fields from natural language.
+
+The rule-based parser works like this:
 
 1. Prefer structured fields if they exist.
 2. If fields are missing, inspect the natural language `query`.
@@ -201,6 +218,27 @@ It works like this:
    - maximum detour minutes
 4. Normalize values.
 5. Apply defaults.
+
+The optional Ollama parser asks a local model to return JSON with:
+
+```json
+{
+  "start": "",
+  "destination": "",
+  "preference": "",
+  "max_detour_minutes": 0,
+  "trip_intent": "unknown"
+}
+```
+
+Ollama is useful for more flexible language, but it is not allowed to break the
+API. RouteBite falls back to the rule-based parser when:
+
+- Ollama is disabled.
+- Ollama is not running.
+- Ollama times out.
+- Ollama returns invalid JSON.
+- Ollama omits required fields.
 
 Example query:
 
@@ -221,14 +259,16 @@ Why this is a good first version:
 
 - It is deterministic.
 - It is easy to test.
-- It keeps the project useful without an LLM dependency.
-- It is behind an interface, so it can be replaced later.
+- It keeps the project useful even without an LLM dependency.
+- Ollama is behind the same parser interface.
+- The fallback keeps `/v1/agent/search` reliable.
 
 Interview explanation:
 
-> "I started with a rule-based parser because it is predictable and testable.
-> The parser is behind an interface, so an OpenAI or Ollama parser can be added
-> later without rewriting the routing and recommendation pipeline."
+> "I started with a rule-based parser because it is predictable and testable,
+> then added an optional Ollama parser behind the same interface. If Ollama
+> fails or returns bad JSON, RouteBite falls back to the rule-based parser, so
+> the recommendation endpoint remains reliable."
 
 ## 6. How Geocoding, Routing, and Restaurant Search Fit In
 
@@ -322,11 +362,35 @@ Why these weights make sense:
 2. If tied, prefer lower detour.
 3. If still tied, prefer higher rating.
 
+Match quality:
+
+- `strong_match`: there is a good top result with a solid score, route fit, and
+  preference match.
+- `weak_match`: there is a usable option, but it is not perfect.
+- `no_match`: no restaurant fits the route constraints, usually because nothing
+  was found within `max_detour_minutes`.
+
+This matters because the assistant should be honest. If there is no good stop
+within the detour limit, RouteBite should say that instead of pretending the
+result is perfect.
+
+Driver-safe summary:
+
+```text
+Saffron Indian Kitchen is the best stop. 6 minute detour. 4.5 stars. Want to call?
+```
+
+No-match summary:
+
+```text
+No soup stop found within 10 minutes. Keep going or increase the detour.
+```
+
 Interview explanation:
 
 > "I added RouteBite Score so the API can explain its recommendation. Instead
 > of just returning restaurants, the backend gives each option a deterministic
-> score and picks the best one."
+> score, marks the match quality, and returns a driver-safe summary."
 
 ## 9. Request ID Tracing and Structured Logging
 
@@ -537,6 +601,9 @@ Important test areas:
 - RouteBite Score produces expected score components
 - `best_pick` uses the highest RouteBite Score
 - `restaurants` still contains results when `best_pick` exists
+- `driver_safe_summary` changes for strong, weak, and no-match cases
+- `tap_to_call` and `open_in_maps_url` are generated when data exists
+- `trip_intent` is inferred from simple query/preference keywords
 
 Why mocks/fakes are important:
 
@@ -660,33 +727,47 @@ export CACHE_TTL_MINUTES=15
 go run ./cmd/server
 ```
 
+Run with Ollama parser:
+
+```bash
+ollama serve
+ollama pull llama3.2:3b
+
+export OLLAMA_ENABLED=true
+export OLLAMA_BASE_URL=http://localhost:11434
+export OLLAMA_MODEL=llama3.2:3b
+export OLLAMA_TIMEOUT_SECONDS=5
+go run ./cmd/server
+```
+
 ## 16. How to Explain the Full Request Flow in an Interview
 
 Short version:
 
 > "RouteBite receives a natural language or structured route request, parses it
-> into a search plan, geocodes the route, gets routing data, searches
-> restaurants near the route, calculates detour cost, scores recommendations,
-> returns a best pick, logs the request with a request ID, optionally caches
-> repeated external results in Redis, and optionally stores the agent search in
-> PostgreSQL."
+> into a search plan using either the rule-based parser or optional Ollama
+> parser, geocodes the route, gets routing data, searches restaurants near the
+> route, calculates detour cost, scores recommendations, returns a best pick,
+> logs the request with a request ID, optionally caches repeated external
+> results in Redis, and optionally stores the agent search in PostgreSQL."
 
 Detailed version:
 
 > "The API starts in Gin. Middleware adds a request ID so logs and errors can
 > be correlated. The agent handler validates the JSON request and passes it to
-> the agent service. The rule-based parser prefers structured fields but can
-> parse simple natural language like 'from X to Y and want pizza under 10
-> minutes.' Then the service geocodes the locations, calculates a route, fetches
-> restaurants near the route, filters by max detour, and ranks candidates. The
-> agent layer adds RouteBite Score, chooses best_pick, and returns a
-> voice-friendly summary. Optional Redis caching reduces repeated geocoding and
-> restaurant calls. Optional PostgreSQL history saves successful searches, but
-> failures do not break the main response."
+> the agent service. The parser prefers structured fields. If Ollama is
+> enabled, it asks the local model for JSON fields; if that fails, the
+> rule-based parser handles simple natural language like 'from X to Y and want
+> pizza under 10 minutes.' Then the service geocodes the locations, calculates a
+> route, fetches restaurants near the route, filters by max detour, and ranks
+> candidates. The agent layer adds RouteBite Score, chooses best_pick, and
+> returns a voice-friendly summary. Optional Redis caching reduces repeated
+> geocoding and restaurant calls. Optional PostgreSQL history saves successful
+> searches, but failures do not break the main response."
 
 Strong technical points:
 
-- interface-based parser design
+- interface-based parser design with Ollama fallback
 - mockable external dependencies
 - optional Redis and PostgreSQL
 - failure-safe infrastructure
@@ -719,15 +800,13 @@ How this helps in interviews:
 
 Good next steps:
 
-### Ollama or OpenAI Parser
-
-Replace or augment the rule-based parser with an LLM-backed parser.
+### OpenAI Parser
 
 Important idea:
 
 - Keep the existing `agentParser` interface.
-- Add a new implementation.
-- Fall back to rule-based parsing if the LLM fails.
+- Add an OpenAI implementation beside the rule-based and Ollama parsers.
+- Keep rule-based fallback if the LLM fails.
 
 ### Auth
 

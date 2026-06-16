@@ -75,12 +75,13 @@ func main() {
 
 	externalCache, closeExternalCache := openExternalCache()
 	defer closeExternalCache()
+	agentParserOption := openAgentParserOption()
 
 	h := api.NewHandler(yelpClient, routeEngine, geocodeClient, c, api.Providers{
 		Restaurants: restaurantProvider,
 		Routing:     routingProvider,
 		Geocoding:   geocodingProvider,
-	}, api.WithAgentSearchHistory(historyRepo), api.WithExternalCache(externalCache, cacheTTL))
+	}, api.WithAgentSearchHistory(historyRepo), api.WithExternalCache(externalCache, cacheTTL), agentParserOption)
 
 	gin.SetMode(getEnv("GIN_MODE", "release"))
 	r := gin.New()
@@ -214,4 +215,26 @@ func openExternalCache() (cache.Cache, func()) {
 	return cache.NewRedisCache(client), func() {
 		_ = client.Close()
 	}
+}
+
+func openAgentParserOption() api.HandlerOption {
+	if os.Getenv("OLLAMA_ENABLED") != "true" {
+		log.Println("agent parser: rule-based (OLLAMA_ENABLED=false)")
+		return func(*api.Handler) {}
+	}
+
+	timeoutSeconds, err := strconv.Atoi(getEnv("OLLAMA_TIMEOUT_SECONDS", "5"))
+	if err != nil || timeoutSeconds <= 0 {
+		timeoutSeconds = 5
+	}
+
+	log.Printf("agent parser: ollama enabled model=%s base_url=%s",
+		getEnv("OLLAMA_MODEL", "llama3.2:3b"),
+		getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
+	)
+	return api.WithAgentParser(api.NewOllamaAgentParser(api.OllamaParserConfig{
+		BaseURL: getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
+		Model:   getEnv("OLLAMA_MODEL", "llama3.2:3b"),
+		Timeout: time.Duration(timeoutSeconds) * time.Second,
+	}, nil))
 }
