@@ -15,16 +15,29 @@ type AgentSearchRequest struct {
 // assistant clients.
 type AgentSearchResponse struct {
 	Summary     string            `json:"summary"`
+	BestPick    *AgentRestaurant  `json:"best_pick,omitempty"`
 	Restaurants []AgentRestaurant `json:"restaurants"`
+}
+
+// ScoreBreakdown explains the 0-100 RouteBite Score in interview-friendly,
+// deterministic pieces.
+type ScoreBreakdown struct {
+	DetourScore          int `json:"detour_score"`
+	RatingScore          int `json:"rating_score"`
+	OpenNowScore         int `json:"open_now_score"`
+	PreferenceMatchScore int `json:"preference_match_score"`
+	ConvenienceScore     int `json:"convenience_score"`
 }
 
 // AgentRestaurant is a simplified recommendation with a human-readable reason.
 type AgentRestaurant struct {
-	Name          string  `json:"name"`
-	Rating        float64 `json:"rating"`
-	DetourMinutes int     `json:"detour_minutes"`
-	OpenNow       bool    `json:"open_now"`
-	Address       string  `json:"address"`
-	Phone         string  `json:"phone"`
-	Reason        string  `json:"reason"`
+	Name           string         `json:"name"`
+	Rating         float64        `json:"rating"`
+	DetourMinutes  int            `json:"detour_minutes"`
+	OpenNow        bool           `json:"open_now"`
+	Address        string         `json:"address"`
+	Phone          string         `json:"phone"`
+	Reason         string         `json:"reason"`
+	RouteBiteScore int            `json:"routebite_score"`
+	ScoreBreakdown ScoreBreakdown `json:"score_breakdown"`
 }

@@ -64,6 +64,23 @@ Returns a compact, driver-safe recommendation response:
 ```json
 {
   "summary": "Best option is Saffron Indian Kitchen, about 6 minutes off your route, rated 4.5 stars and currently open.",
+  "best_pick": {
+    "name": "Saffron Indian Kitchen",
+    "rating": 4.5,
+    "detour_minutes": 6,
+    "open_now": true,
+    "address": "123 Main St, Nashville, TN",
+    "phone": "+16155551212",
+    "reason": "Highest RouteBite Score (84/100): low detour, highly rated, currently open.",
+    "routebite_score": 84,
+    "score_breakdown": {
+      "detour_score": 40,
+      "rating_score": 90,
+      "open_now_score": 100,
+      "preference_match_score": 100,
+      "convenience_score": 100
+    }
+  },
   "restaurants": [
     {
       "name": "Saffron Indian Kitchen",
@@ -72,7 +89,15 @@ Returns a compact, driver-safe recommendation response:
       "open_now": true,
       "address": "123 Main St, Nashville, TN",
       "phone": "+16155551212",
-      "reason": "Low detour, highly rated, currently open"
+      "reason": "Low detour, highly rated, currently open",
+      "routebite_score": 84,
+      "score_breakdown": {
+        "detour_score": 40,
+        "rating_score": 90,
+        "open_now_score": 100,
+        "preference_match_score": 100,
+        "convenience_score": 100
+      }
     }
   ]
 }
@@ -111,6 +136,8 @@ route/restaurant backend.
 
 ## Scoring formula
 
+Core restaurant ranking:
+
 ```
 score = rating_normalized       * 0.4
       + review_count_normalized * 0.2
@@ -118,7 +145,22 @@ score = rating_normalized       * 0.4
       + (open_now ? 0.1 : 0)
 ```
 
-Mimics the tradeoff a driver makes mentally: how good is it, vs how much does it cost me to stop?
+Agent responses also include a **RouteBite Score** from 0 to 100. This is a
+simple decision score for the final recommendation layer:
+
+```
+routebite_score =
+    detour_score           * 0.35
+  + rating_score           * 0.25
+  + open_now_score         * 0.15
+  + preference_match_score * 0.15
+  + convenience_score      * 0.10
+```
+
+`best_pick` is the highest RouteBite Score after tie-breaking by lower detour
+and then higher rating. This mimics the tradeoff a driver makes mentally: how
+good is it, how closely does it match what I asked for, and how much does it
+cost me to stop?
 
 ## Tech stack
 
@@ -142,6 +184,64 @@ Mimics the tradeoff a driver makes mentally: how good is it, vs how much does it
 | `GET`  | `/v1/providers` | Show active data providers |
 | `GET`  | `/v1/health` | Health check |
 | `GET`  | `/v1/metrics` | Prometheus metrics |
+
+## Request tracing and logs
+
+Every request gets an `X-Request-ID` response header. If a caller sends an
+`X-Request-ID` header, RouteBite preserves it; otherwise the middleware
+generates one. Error responses include the same `request_id` so logs and client
+reports can be correlated.
+
+Example error shape:
+
+```json
+{
+  "error": {
+    "message": "agent needs a start location",
+    "request_id": "client-request-123"
+  }
+}
+```
+
+The request logger emits one JSON line per request with method, path, status,
+latency, client IP, and request ID:
+
+```json
+{
+  "timestamp": "2026-06-16T00:00:00Z",
+  "method": "POST",
+  "path": "/v1/agent/search",
+  "status": 200,
+  "latency_ms": 42,
+  "client_ip": "127.0.0.1",
+  "request_id": "client-request-123"
+}
+```
+
+## Optional PostgreSQL persistence
+
+RouteBite can store `/v1/agent/search` history in PostgreSQL for demos,
+analytics, and backend portfolio depth. This is disabled by default, so the app
+still runs normally without a database.
+
+Enable it only when you have a database ready:
+
+```bash
+export DB_ENABLED=true
+export DATABASE_URL='postgres://routebite:routebite@localhost:5432/routebite?sslmode=disable'
+psql "$DATABASE_URL" -f migrations/001_create_agent_searches.sql
+go run ./cmd/server
+```
+
+Each successful agent search records the request ID, query, normalized route
+fields, preference, max detour, result count, and driver-safe summary. If the
+save fails, RouteBite logs the error and still returns the recommendation.
+
+Run without PostgreSQL:
+
+```bash
+DB_ENABLED=false go run ./cmd/server
+```
 
 ## Getting started
 

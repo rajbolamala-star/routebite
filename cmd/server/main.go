@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"net/http"
 	"os"
@@ -12,10 +13,12 @@ import (
 	"github.com/dheerajb/routebite/internal/api"
 	"github.com/dheerajb/routebite/internal/cache"
 	"github.com/dheerajb/routebite/internal/geocode"
+	"github.com/dheerajb/routebite/internal/history"
 	"github.com/dheerajb/routebite/internal/middleware"
 	"github.com/dheerajb/routebite/internal/routing"
 	"github.com/dheerajb/routebite/internal/yelp"
 	"github.com/gin-gonic/gin"
+	_ "github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -64,15 +67,18 @@ func main() {
 	c := cache.New(5 * time.Minute)
 	go purgeLoop(c)
 
+	historyRepo, closeHistoryRepo := openHistoryRepository()
+	defer closeHistoryRepo()
+
 	h := api.NewHandler(yelpClient, routeEngine, geocodeClient, c, api.Providers{
 		Restaurants: restaurantProvider,
 		Routing:     routingProvider,
 		Geocoding:   geocodingProvider,
-	})
+	}, api.WithAgentSearchHistory(historyRepo))
 
 	gin.SetMode(getEnv("GIN_MODE", "release"))
 	r := gin.New()
-	r.Use(gin.Recovery(), middleware.StructuredLogger())
+	r.Use(gin.Recovery(), middleware.RequestID(), middleware.StructuredLogger())
 
 	if _, err := os.Stat("./web/out/index.html"); err == nil {
 		r.Static("/_next", "./web/out/_next")
@@ -129,4 +135,39 @@ func getEnv(k, d string) string {
 		return v
 	}
 	return d
+}
+
+func openHistoryRepository() (history.Repository, func()) {
+	if os.Getenv("DB_ENABLED") != "true" {
+		log.Println("agent search persistence: disabled (DB_ENABLED=false)")
+		return history.NoopRepository{}, func() {}
+	}
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		log.Println("agent search persistence: disabled (DATABASE_URL not set)")
+		return history.NoopRepository{}, func() {}
+	}
+
+	db, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		log.Printf("agent search persistence: disabled (open failed: %v)", err)
+		return history.NoopRepository{}, func() {}
+	}
+	db.SetMaxOpenConns(5)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(30 * time.Minute)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		log.Printf("agent search persistence: disabled (ping failed: %v)", err)
+		_ = db.Close()
+		return history.NoopRepository{}, func() {}
+	}
+
+	log.Println("agent search persistence: postgres")
+	return history.NewPostgresRepository(db), func() {
+		_ = db.Close()
+	}
 }
