@@ -130,7 +130,8 @@ Step-by-step flow:
 10. Ranking keeps the best practical restaurants.
 11. RouteBite Score explains each recommendation.
 12. `best_pick` selects the highest-scoring option.
-13. The response returns `summary`, `best_pick`, and `restaurants`.
+13. The response returns `summary`, `driver_safe_summary`, `match_quality`,
+    `trip_intent`, `best_pick`, and `restaurants`.
 14. If PostgreSQL is enabled, RouteBite saves the request summary.
 15. If Redis is enabled, repeated geocoding/restaurant lookups can be cached.
 
@@ -139,6 +140,9 @@ Response shape:
 ```json
 {
   "summary": "Best option is Saffron Indian Kitchen, about 6 minutes off your route, rated 4.5 stars and currently open.",
+  "driver_safe_summary": "Saffron Indian Kitchen is the best stop. 6 minute detour. 4.5 stars. Want to call?",
+  "match_quality": "strong_match",
+  "trip_intent": "food",
   "best_pick": {
     "name": "Saffron Indian Kitchen",
     "rating": 4.5,
@@ -146,6 +150,8 @@ Response shape:
     "open_now": true,
     "address": "123 Main St, Nashville, TN",
     "phone": "+16155551212",
+    "tap_to_call": "tel:+16155551212",
+    "open_in_maps_url": "https://www.google.com/maps/search/?api=1&query=123+Main+St%2C+Nashville%2C+TN",
     "reason": "Highest RouteBite Score (84/100): low detour, highly rated, currently open.",
     "routebite_score": 84,
     "score_breakdown": {
@@ -164,6 +170,8 @@ Response shape:
       "open_now": true,
       "address": "123 Main St, Nashville, TN",
       "phone": "+16155551212",
+      "tap_to_call": "tel:+16155551212",
+      "open_in_maps_url": "https://www.google.com/maps/search/?api=1&query=123+Main+St%2C+Nashville%2C+TN",
       "reason": "Low detour, highly rated, currently open",
       "routebite_score": 84,
       "score_breakdown": {
@@ -184,6 +192,12 @@ Important API detail:
 - `restaurants` still contains the list of top recommendations.
 - Existing fields like `name`, `rating`, `detour_minutes`, `open_now`,
   `address`, `phone`, and `reason` remain available.
+- `driver_safe_summary` is short enough for a phone or voice assistant to read.
+- `match_quality` tells whether the recommendation is a `strong_match`,
+  `weak_match`, or `no_match`.
+- `trip_intent` is a simple label such as `food`, `soup`, `coffee`,
+  `gas_food`, `restroom_food`, or `unknown`.
+- `tap_to_call` and `open_in_maps_url` make each recommendation actionable.
 
 ## 5. How the Agent Parser Works
 
@@ -322,11 +336,35 @@ Why these weights make sense:
 2. If tied, prefer lower detour.
 3. If still tied, prefer higher rating.
 
+Match quality:
+
+- `strong_match`: there is a good top result with a solid score, route fit, and
+  preference match.
+- `weak_match`: there is a usable option, but it is not perfect.
+- `no_match`: no restaurant fits the route constraints, usually because nothing
+  was found within `max_detour_minutes`.
+
+This matters because the assistant should be honest. If there is no good stop
+within the detour limit, RouteBite should say that instead of pretending the
+result is perfect.
+
+Driver-safe summary:
+
+```text
+Saffron Indian Kitchen is the best stop. 6 minute detour. 4.5 stars. Want to call?
+```
+
+No-match summary:
+
+```text
+No soup stop found within 10 minutes. Keep going or increase the detour.
+```
+
 Interview explanation:
 
 > "I added RouteBite Score so the API can explain its recommendation. Instead
 > of just returning restaurants, the backend gives each option a deterministic
-> score and picks the best one."
+> score, marks the match quality, and returns a driver-safe summary."
 
 ## 9. Request ID Tracing and Structured Logging
 
@@ -537,6 +575,9 @@ Important test areas:
 - RouteBite Score produces expected score components
 - `best_pick` uses the highest RouteBite Score
 - `restaurants` still contains results when `best_pick` exists
+- `driver_safe_summary` changes for strong, weak, and no-match cases
+- `tap_to_call` and `open_in_maps_url` are generated when data exists
+- `trip_intent` is inferred from simple query/preference keywords
 
 Why mocks/fakes are important:
 

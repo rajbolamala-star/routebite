@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -18,6 +19,21 @@ const agentResultLimit = 3
 const (
 	defaultAgentMaxDetour = 10
 	maxAgentDetour        = 30
+)
+
+const (
+	matchStrong = "strong_match"
+	matchWeak   = "weak_match"
+	matchNone   = "no_match"
+)
+
+const (
+	tripIntentFood         = "food"
+	tripIntentSoup         = "soup"
+	tripIntentCoffee       = "coffee"
+	tripIntentGasFood      = "gas_food"
+	tripIntentRestroomFood = "restroom_food"
+	tripIntentUnknown      = "unknown"
 )
 
 var (
@@ -71,11 +87,15 @@ func (h *Handler) runAgentSearch(ctx context.Context, req AgentSearchRequest) (A
 	}
 	sortAgentRestaurants(restaurants)
 	bestPick := bestAgentPick(restaurants)
+	matchQuality := agentMatchQuality(restaurants, plan.MaxDetourMinutes)
 
 	return AgentSearchResponse{
-		Summary:     agentSummary(restaurants, plan.Preference),
-		BestPick:    bestPick,
-		Restaurants: restaurants,
+		Summary:           agentSummary(restaurants, plan.Preference, matchQuality, plan.MaxDetourMinutes),
+		DriverSafeSummary: driverSafeSummary(restaurants, plan.Preference, matchQuality, plan.MaxDetourMinutes),
+		MatchQuality:      matchQuality,
+		TripIntent:        inferTripIntent(req),
+		BestPick:          bestPick,
+		Restaurants:       restaurants,
 	}, plan, nil
 }
 
@@ -203,6 +223,8 @@ func toAgentRestaurant(result scoring.Restaurant, preference string, maxDetourMi
 		OpenNow:        result.IsOpenNow,
 		Address:        result.Address,
 		Phone:          result.Phone,
+		TapToCall:      tapToCall(result.Phone),
+		OpenInMapsURL:  openInMapsURL(result),
 		RouteBiteScore: routeBiteScore,
 		ScoreBreakdown: breakdown,
 	}
@@ -352,20 +374,105 @@ func bestPickReason(result AgentRestaurant) string {
 	return fmt.Sprintf("Highest RouteBite Score (%d/100): %s.", result.RouteBiteScore, strings.ToLower(agentReason(result)))
 }
 
-func agentSummary(restaurants []AgentRestaurant, preference string) string {
+func agentMatchQuality(restaurants []AgentRestaurant, maxDetourMinutes int) string {
+	if len(restaurants) == 0 {
+		return matchNone
+	}
+	top := restaurants[0]
+	if top.RouteBiteScore >= 75 &&
+		top.ScoreBreakdown.PreferenceMatchScore >= 80 &&
+		top.DetourMinutes <= maxDetourMinutes {
+		return matchStrong
+	}
+	return matchWeak
+}
+
+func agentSummary(restaurants []AgentRestaurant, preference string, matchQuality string, maxDetourMinutes int) string {
 	if len(restaurants) == 0 {
 		if preference == "" {
-			return "I could not find a good food stop within your route constraints."
+			return fmt.Sprintf("I could not find a good food stop within %d minutes of your route.", maxDetourMinutes)
 		}
-		return fmt.Sprintf("I could not find a good %s stop within your route constraints.", preference)
+		return fmt.Sprintf("I could not find a good %s stop within %d minutes of your route.", preference, maxDetourMinutes)
 	}
 	top := restaurants[0]
 	openText := "availability unknown"
 	if top.OpenNow {
 		openText = "currently open"
 	}
+	if matchQuality == matchWeak {
+		return fmt.Sprintf("Closest reasonable option is %s, about %d minutes off your route, rated %.1f stars and %s.",
+			top.Name, top.DetourMinutes, top.Rating, openText)
+	}
 	return fmt.Sprintf("Best option is %s, about %d minutes off your route, rated %.1f stars and %s.",
 		top.Name, top.DetourMinutes, top.Rating, openText)
+}
+
+func driverSafeSummary(restaurants []AgentRestaurant, preference string, matchQuality string, maxDetourMinutes int) string {
+	if len(restaurants) == 0 {
+		if preference == "" {
+			return fmt.Sprintf("No safe food stop found within %d minutes. Keep going or increase the detour.", maxDetourMinutes)
+		}
+		return fmt.Sprintf("No %s stop found within %d minutes. Keep going or increase the detour.", preference, maxDetourMinutes)
+	}
+	top := restaurants[0]
+	switch matchQuality {
+	case matchStrong:
+		return fmt.Sprintf("%s is the best stop. %d minute detour. %.1f stars. Want to call?", top.Name, top.DetourMinutes, top.Rating)
+	case matchWeak:
+		return fmt.Sprintf("%s is the closest reasonable option, but it is not a perfect match. %d minute detour.", top.Name, top.DetourMinutes)
+	default:
+		return fmt.Sprintf("No safe %s stop found within %d minutes. Keep going or increase the detour.", preference, maxDetourMinutes)
+	}
+}
+
+func inferTripIntent(req AgentSearchRequest) string {
+	text := strings.ToLower(strings.Join([]string{req.Query, req.Preference}, " "))
+	switch {
+	case strings.Contains(text, "gas") && containsAny(text, "food", "eat", "restaurant", "coffee", "soup", "pizza", "indian", "lunch", "dinner"):
+		return tripIntentGasFood
+	case (strings.Contains(text, "restroom") || strings.Contains(text, "bathroom")) &&
+		containsAny(text, "food", "eat", "restaurant", "coffee", "soup", "pizza", "indian", "lunch", "dinner"):
+		return tripIntentRestroomFood
+	case strings.Contains(text, "soup"):
+		return tripIntentSoup
+	case strings.Contains(text, "coffee") || strings.Contains(text, "cafe"):
+		return tripIntentCoffee
+	case containsAny(text, "food", "eat", "restaurant", "pizza", "indian", "burger", "taco", "pho", "lunch", "dinner"):
+		return tripIntentFood
+	default:
+		return tripIntentUnknown
+	}
+}
+
+func containsAny(s string, terms ...string) bool {
+	for _, term := range terms {
+		if strings.Contains(s, term) {
+			return true
+		}
+	}
+	return false
+}
+
+func tapToCall(phone string) string {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return ""
+	}
+	if strings.HasPrefix(phone, "tel:") {
+		return phone
+	}
+	return "tel:" + phone
+}
+
+func openInMapsURL(result scoring.Restaurant) string {
+	query := strings.TrimSpace(result.Address)
+	if query == "" && (result.Location.Lat != 0 || result.Location.Lng != 0) {
+		query = fmt.Sprintf("%.6f,%.6f", result.Location.Lat, result.Location.Lng)
+	}
+	if query == "" {
+		return ""
+	}
+	return "https://www.google.com/maps/search/?api=1&query=" + url.QueryEscape(query)
 }
 
 func sentenceCase(s string) string {

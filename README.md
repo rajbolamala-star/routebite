@@ -64,6 +64,9 @@ Returns a compact, driver-safe recommendation response:
 ```json
 {
   "summary": "Best option is Saffron Indian Kitchen, about 6 minutes off your route, rated 4.5 stars and currently open.",
+  "driver_safe_summary": "Saffron Indian Kitchen is the best stop. 6 minute detour. 4.5 stars. Want to call?",
+  "match_quality": "strong_match",
+  "trip_intent": "food",
   "best_pick": {
     "name": "Saffron Indian Kitchen",
     "rating": 4.5,
@@ -71,6 +74,8 @@ Returns a compact, driver-safe recommendation response:
     "open_now": true,
     "address": "123 Main St, Nashville, TN",
     "phone": "+16155551212",
+    "tap_to_call": "tel:+16155551212",
+    "open_in_maps_url": "https://www.google.com/maps/search/?api=1&query=123+Main+St%2C+Nashville%2C+TN",
     "reason": "Highest RouteBite Score (84/100): low detour, highly rated, currently open.",
     "routebite_score": 84,
     "score_breakdown": {
@@ -89,6 +94,8 @@ Returns a compact, driver-safe recommendation response:
       "open_now": true,
       "address": "123 Main St, Nashville, TN",
       "phone": "+16155551212",
+      "tap_to_call": "tel:+16155551212",
+      "open_in_maps_url": "https://www.google.com/maps/search/?api=1&query=123+Main+St%2C+Nashville%2C+TN",
       "reason": "Low detour, highly rated, currently open",
       "routebite_score": 84,
       "score_breakdown": {
@@ -102,6 +109,13 @@ Returns a compact, driver-safe recommendation response:
   ]
 }
 ```
+
+`match_quality` is `strong_match`, `weak_match`, or `no_match`. If no
+restaurant fits the max detour, the agent returns a no-match summary instead of
+pretending the result is good. `driver_safe_summary` is short enough for a
+mobile or voice assistant to read aloud while driving. `trip_intent` is a simple
+classification such as `food`, `soup`, `coffee`, `gas_food`,
+`restroom_food`, or `unknown`.
 
 The first agent version is rule-based by design: it prefers structured fields
 when present, parses simple `from ... to ... want ... under N minutes` queries

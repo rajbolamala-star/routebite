@@ -125,6 +125,15 @@ func TestAgentSearch_StructuredFields(t *testing.T) {
 	if got.Summary == "" {
 		t.Fatal("Summary is empty")
 	}
+	if got.DriverSafeSummary == "" {
+		t.Fatal("DriverSafeSummary is empty")
+	}
+	if got.MatchQuality != matchStrong {
+		t.Fatalf("MatchQuality = %q, want %q", got.MatchQuality, matchStrong)
+	}
+	if got.TripIntent != tripIntentSoup {
+		t.Fatalf("TripIntent = %q, want %q", got.TripIntent, tripIntentSoup)
+	}
 	if len(got.Restaurants) == 0 || len(got.Restaurants) > agentResultLimit {
 		t.Fatalf("restaurants len = %d, want 1..%d", len(got.Restaurants), agentResultLimit)
 	}
@@ -146,8 +155,23 @@ func TestAgentSearch_StructuredFields(t *testing.T) {
 	if got.BestPick.RouteBiteScore != got.Restaurants[0].RouteBiteScore {
 		t.Fatalf("best pick score = %d, first restaurant score = %d", got.BestPick.RouteBiteScore, got.Restaurants[0].RouteBiteScore)
 	}
+	if got.BestPick.ScoreBreakdown == (ScoreBreakdown{}) {
+		t.Fatal("best_pick score_breakdown is empty")
+	}
+	if got.BestPick.TapToCall == "" {
+		t.Fatal("best_pick tap_to_call is empty")
+	}
+	if got.BestPick.OpenInMapsURL == "" {
+		t.Fatal("best_pick open_in_maps_url is empty")
+	}
 	if got.Restaurants[0].ScoreBreakdown == (ScoreBreakdown{}) {
 		t.Fatal("first restaurant score_breakdown is empty")
+	}
+	if got.Restaurants[0].TapToCall == "" {
+		t.Fatal("first restaurant tap_to_call is empty")
+	}
+	if got.Restaurants[0].OpenInMapsURL == "" {
+		t.Fatal("first restaurant open_in_maps_url is empty")
 	}
 }
 
@@ -345,6 +369,110 @@ func TestBestPickUsesHighestRouteBiteScore(t *testing.T) {
 	}
 	if !strings.Contains(got.Reason, "Highest RouteBite Score (90/100)") {
 		t.Fatalf("reason = %q, want RouteBite Score explanation", got.Reason)
+	}
+}
+
+func TestAgentMatchQuality(t *testing.T) {
+	strong := agentMatchQuality([]AgentRestaurant{{
+		DetourMinutes:  4,
+		RouteBiteScore: 82,
+		ScoreBreakdown: ScoreBreakdown{
+			PreferenceMatchScore: 100,
+		},
+	}}, 10)
+	if strong != matchStrong {
+		t.Fatalf("strong match = %q, want %q", strong, matchStrong)
+	}
+
+	weak := agentMatchQuality([]AgentRestaurant{{
+		DetourMinutes:  9,
+		RouteBiteScore: 68,
+		ScoreBreakdown: ScoreBreakdown{
+			PreferenceMatchScore: 60,
+		},
+	}}, 10)
+	if weak != matchWeak {
+		t.Fatalf("weak match = %q, want %q", weak, matchWeak)
+	}
+
+	none := agentMatchQuality(nil, 10)
+	if none != matchNone {
+		t.Fatalf("no match = %q, want %q", none, matchNone)
+	}
+}
+
+func TestDriverSafeSummaryForNoMatch(t *testing.T) {
+	got := driverSafeSummary(nil, "soup", matchNone, 10)
+	if !strings.Contains(got, "No soup stop found within 10 minutes") {
+		t.Fatalf("driver safe summary = %q, want no-match message", got)
+	}
+	summary := agentSummary(nil, "soup", matchNone, 10)
+	if !strings.Contains(summary, "within 10 minutes") {
+		t.Fatalf("summary = %q, want detour-aware no-match message", summary)
+	}
+}
+
+func TestAgentRestaurantMapsAndPhoneFields(t *testing.T) {
+	got := toAgentRestaurant(scoring.Restaurant{
+		Name:         "Saffron Indian Kitchen",
+		Rating:       4.5,
+		ExtraMinutes: 2,
+		IsOpenNow:    true,
+		Address:      "123 Main St, Nashville, TN",
+		Phone:        "+16155551212",
+		Cuisine:      []string{"Indian"},
+	}, "Indian food", 10)
+
+	if got.TapToCall != "tel:+16155551212" {
+		t.Fatalf("TapToCall = %q, want tel link", got.TapToCall)
+	}
+	if !strings.Contains(got.OpenInMapsURL, "google.com/maps/search") {
+		t.Fatalf("OpenInMapsURL = %q, want Google Maps search URL", got.OpenInMapsURL)
+	}
+	if !strings.Contains(got.OpenInMapsURL, "123+Main+St") {
+		t.Fatalf("OpenInMapsURL = %q, want encoded address", got.OpenInMapsURL)
+	}
+}
+
+func TestInferTripIntent(t *testing.T) {
+	tests := []struct {
+		name string
+		req  AgentSearchRequest
+		want string
+	}{
+		{
+			name: "soup",
+			req:  AgentSearchRequest{Query: "I want soup on the way"},
+			want: tripIntentSoup,
+		},
+		{
+			name: "coffee",
+			req:  AgentSearchRequest{Preference: "coffee"},
+			want: tripIntentCoffee,
+		},
+		{
+			name: "gas food",
+			req:  AgentSearchRequest{Query: "need gas and food near the route"},
+			want: tripIntentGasFood,
+		},
+		{
+			name: "restroom food",
+			req:  AgentSearchRequest{Query: "restroom and lunch stop"},
+			want: tripIntentRestroomFood,
+		},
+		{
+			name: "unknown",
+			req:  AgentSearchRequest{Query: "somewhere quiet"},
+			want: tripIntentUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := inferTripIntent(tt.req); got != tt.want {
+				t.Fatalf("inferTripIntent() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
