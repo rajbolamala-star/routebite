@@ -19,6 +19,9 @@ func TestRequestID_GeneratesHeader(t *testing.T) {
 		if GetRequestID(c) == "" {
 			t.Fatal("request id missing from context")
 		}
+		if RequestIDFromContext(c.Request.Context()) == "" {
+			t.Fatal("request id missing from request context")
+		}
 		c.Status(http.StatusNoContent)
 	})
 
