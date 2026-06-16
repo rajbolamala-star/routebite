@@ -82,6 +82,7 @@ func main() {
 	v1 := r.Group("/v1")
 	{
 		v1.POST("/search", h.Search)
+		v1.POST("/agent/search", h.AgentSearch)
 		v1.GET("/geocode", h.Geocode)
 		v1.GET("/providers", h.Providers)
 		v1.GET("/health", h.Health)

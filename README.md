@@ -20,7 +20,10 @@ That's five context-switches while driving. Unsafe and slow. RouteBite collapses
 
 ## What it does
 
-`POST /v1/search` with:
+`POST /v1/search` with coordinates, or `POST /v1/agent/search` with a more
+assistant-like request.
+
+Core search:
 
 ```json
 {
@@ -43,6 +46,44 @@ Returns:
   "voice_summary": "Found 3 spots. Top pick is Pho 78 — 4.6 stars, 4 extra minutes. Want to call?"
 }
 ```
+
+Agent search:
+
+```json
+{
+  "query": "I am driving from Kingsport TN to Nashville TN and want Indian food with less than 10 minutes detour",
+  "start": "Kingsport, TN",
+  "destination": "Nashville, TN",
+  "preference": "Indian food",
+  "max_detour_minutes": 10
+}
+```
+
+Returns a compact, driver-safe recommendation response:
+
+```json
+{
+  "summary": "Best option is Saffron Indian Kitchen, about 6 minutes off your route, rated 4.5 stars and currently open.",
+  "restaurants": [
+    {
+      "name": "Saffron Indian Kitchen",
+      "rating": 4.5,
+      "detour_minutes": 6,
+      "open_now": true,
+      "address": "123 Main St, Nashville, TN",
+      "phone": "+16155551212",
+      "reason": "Low detour, highly rated, currently open"
+    }
+  ]
+}
+```
+
+The first agent version is rule-based by design: it prefers structured fields
+when present, parses simple `from ... to ... want ... under N minutes` queries
+when needed, then reuses the existing geocoding, routing, Yelp, cache, detour
+scoring, and ranking pipeline. The parsing layer is intentionally small so it
+can be swapped for OpenAI, Ollama, or another LLM later without rewriting the
+route/restaurant backend.
 
 ## Architecture
 
@@ -96,6 +137,7 @@ Mimics the tradeoff a driver makes mentally: how good is it, vs how much does it
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/v1/search` | Find restaurants along a route |
+| `POST` | `/v1/agent/search` | Agent-style natural language or structured route search |
 | `GET`  | `/v1/geocode` | Resolve typed places into coordinates |
 | `GET`  | `/v1/providers` | Show active data providers |
 | `GET`  | `/v1/health` | Health check |
@@ -114,6 +156,20 @@ go run ./cmd/server
 curl -X POST http://localhost:8080/v1/search \
   -H "Content-Type: application/json" \
   -d @scripts/example_request.json
+```
+
+Try the agent endpoint:
+
+```bash
+curl -X POST http://localhost:8080/v1/agent/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "I am driving from North Miami Beach to Sunrise and want soup with less than 10 minutes detour",
+    "start": "North Miami Beach",
+    "destination": "Sunrise",
+    "preference": "soup",
+    "max_detour_minutes": 10
+  }'
 ```
 
 Or via Docker:

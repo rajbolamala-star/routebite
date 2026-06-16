@@ -1,0 +1,150 @@
+package api
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/dheerajb/routebite/internal/cache"
+	"github.com/dheerajb/routebite/internal/geocode"
+	"github.com/dheerajb/routebite/internal/routing"
+	"github.com/dheerajb/routebite/internal/yelp"
+	"github.com/gin-gonic/gin"
+)
+
+func TestParseAgentRequest_QueryOnly(t *testing.T) {
+	got := parseAgentRequest(AgentSearchRequest{
+		Query: "I am driving from North Miami Beach to Sunrise and want Indian food with less than 10 minutes detour",
+	})
+
+	if got.Start != "North Miami Beach" {
+		t.Fatalf("Start = %q, want North Miami Beach", got.Start)
+	}
+	if got.Destination != "Sunrise" {
+		t.Fatalf("Destination = %q, want Sunrise", got.Destination)
+	}
+	if got.Preference != "Indian" {
+		t.Fatalf("Preference = %q, want Indian", got.Preference)
+	}
+	if got.MaxDetourMinutes != 10 {
+		t.Fatalf("MaxDetourMinutes = %d, want 10", got.MaxDetourMinutes)
+	}
+}
+
+func TestParseAgentRequest_StructuredFieldsWin(t *testing.T) {
+	got := parseAgentRequest(AgentSearchRequest{
+		Query:            "from Brooklyn to Newark and want pizza under 8 minutes",
+		Start:            "North Miami Beach",
+		Destination:      "Sunrise",
+		Preference:       "Soup Food",
+		MaxDetourMinutes: 12,
+	})
+
+	if got.Start != "North Miami Beach" || got.Destination != "Sunrise" {
+		t.Fatalf("structured route fields were not preserved: %+v", got)
+	}
+	if got.Preference != "Soup" {
+		t.Fatalf("Preference = %q, want Soup", got.Preference)
+	}
+	if got.MaxDetourMinutes != 12 {
+		t.Fatalf("MaxDetourMinutes = %d, want 12", got.MaxDetourMinutes)
+	}
+}
+
+func TestParseAgentRequest_ForPreference(t *testing.T) {
+	got := parseAgentRequest(AgentSearchRequest{
+		Query: "driving from Brooklyn to Newark for Indian food under 7 minutes",
+	})
+
+	if got.Start != "Brooklyn" {
+		t.Fatalf("Start = %q, want Brooklyn", got.Start)
+	}
+	if got.Destination != "Newark" {
+		t.Fatalf("Destination = %q, want Newark", got.Destination)
+	}
+	if got.Preference != "Indian" {
+		t.Fatalf("Preference = %q, want Indian", got.Preference)
+	}
+	if got.MaxDetourMinutes != 7 {
+		t.Fatalf("MaxDetourMinutes = %d, want 7", got.MaxDetourMinutes)
+	}
+}
+
+func TestParseAgentRequest_DetourDefaultsAndClamp(t *testing.T) {
+	defaulted := parseAgentRequest(AgentSearchRequest{Start: "A", Destination: "B", Preference: "coffee"})
+	if defaulted.MaxDetourMinutes != defaultAgentMaxDetour {
+		t.Fatalf("default detour = %d, want %d", defaulted.MaxDetourMinutes, defaultAgentMaxDetour)
+	}
+
+	clamped := parseAgentRequest(AgentSearchRequest{Start: "A", Destination: "B", Preference: "coffee", MaxDetourMinutes: 99})
+	if clamped.MaxDetourMinutes != maxAgentDetour {
+		t.Fatalf("clamped detour = %d, want %d", clamped.MaxDetourMinutes, maxAgentDetour)
+	}
+}
+
+func TestAgentSearch_StructuredFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewHandler(
+		yelp.NewMock(),
+		routing.NewMockEngine(),
+		geocode.NewMock(),
+		cache.New(time.Minute),
+		Providers{Restaurants: "mock", Routing: "mock", Geocoding: "mock"},
+	)
+
+	body := bytes.NewBufferString(`{
+		"start": "North Miami Beach",
+		"destination": "Sunrise",
+		"preference": "soup",
+		"max_detour_minutes": 10
+	}`)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agent/search", body)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.AgentSearch(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var got AgentSearchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Summary == "" {
+		t.Fatal("Summary is empty")
+	}
+	if len(got.Restaurants) == 0 || len(got.Restaurants) > agentResultLimit {
+		t.Fatalf("restaurants len = %d, want 1..%d", len(got.Restaurants), agentResultLimit)
+	}
+	if got.Restaurants[0].Reason == "" {
+		t.Fatal("first restaurant reason is empty")
+	}
+}
+
+func TestAgentSearch_MissingRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewHandler(
+		yelp.NewMock(),
+		routing.NewMockEngine(),
+		geocode.NewMock(),
+		cache.New(time.Minute),
+		Providers{Restaurants: "mock", Routing: "mock", Geocoding: "mock"},
+	)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agent/search", bytes.NewBufferString(`{"preference":"soup"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.AgentSearch(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -47,6 +48,7 @@ type Handler struct {
 	cache     *cache.TTL
 	weights   scoring.Weights
 	providers Providers
+	agent     agentParser
 }
 
 func NewHandler(y yelp.Client, r routing.Engine, g geocode.Client, c *cache.TTL, providers Providers) *Handler {
@@ -57,6 +59,7 @@ func NewHandler(y yelp.Client, r routing.Engine, g geocode.Client, c *cache.TTL,
 		cache:     c,
 		weights:   scoring.Default,
 		providers: providers,
+		agent:     ruleBasedAgentParser{},
 	}
 }
 
@@ -73,6 +76,25 @@ func (h *Handler) Search(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	resp, searchErr := h.runSearch(c.Request.Context(), req)
+	if searchErr != nil {
+		searchTotal.WithLabelValues(searchErr.outcome).Inc()
+		c.JSON(searchErr.status, gin.H{"error": searchErr.message})
+		return
+	}
+
+	searchTotal.WithLabelValues("success").Inc()
+	c.JSON(http.StatusOK, resp)
+}
+
+type apiSearchError struct {
+	outcome string
+	status  int
+	message string
+}
+
+func (h *Handler) runSearch(ctx context.Context, req SearchRequest) (SearchResponse, *apiSearchError) {
 	applyDefaults(&req)
 
 	// Resolve cuisine intent from voice_text if not provided directly.
@@ -86,16 +108,17 @@ func (h *Handler) Search(c *gin.Context) {
 		}
 	}
 
-	ctx := c.Request.Context()
 	originPoint := routing.Point{Lat: req.Origin.Lat, Lng: req.Origin.Lng}
 	destinationPoint := routing.Point{Lat: req.Destination.Lat, Lng: req.Destination.Lng}
 
 	// 1) Route.
 	route, err := h.route.Route(ctx, originPoint, destinationPoint)
 	if err != nil {
-		searchTotal.WithLabelValues("route_error").Inc()
-		c.JSON(http.StatusBadGateway, gin.H{"error": "routing failed: " + err.Error()})
-		return
+		return SearchResponse{}, &apiSearchError{
+			outcome: "route_error",
+			status:  http.StatusBadGateway,
+			message: "routing failed: " + err.Error(),
+		}
 	}
 
 	// 2) Yelp candidates around route midpoint (with cache).
@@ -103,9 +126,11 @@ func (h *Handler) Search(c *gin.Context) {
 	radius := routing.BoundingRadiusM(route.Polyline)
 	businesses, err := h.fetchYelp(ctx, cuisine, center, radius, req.OpenNowOnly)
 	if err != nil {
-		searchTotal.WithLabelValues("yelp_error").Inc()
-		c.JSON(http.StatusBadGateway, gin.H{"error": "restaurant search failed: " + err.Error()})
-		return
+		return SearchResponse{}, &apiSearchError{
+			outcome: "yelp_error",
+			status:  http.StatusBadGateway,
+			message: "restaurant search failed: " + err.Error(),
+		}
 	}
 
 	// 3) Score + detour math.
@@ -113,17 +138,14 @@ func (h *Handler) Search(c *gin.Context) {
 	results := scoring.RankWithDetours(businesses, route.Polyline, detours, req.MaxDetourMinutes, req.MaxResults, h.weights)
 
 	// 4) Build response.
-	resp := SearchResponse{
+	return SearchResponse{
 		RouteSummary: RouteSummary{
 			BaseDurationMin: route.DurationSec / 60.0,
 			DistanceKm:      route.DistanceM / 1000.0,
 		},
 		Results:      results,
 		VoiceSummary: scoring.VoiceSummary(results, cuisine),
-	}
-
-	searchTotal.WithLabelValues("success").Inc()
-	c.JSON(http.StatusOK, resp)
+	}, nil
 }
 
 func (h *Handler) preciseDetours(
@@ -234,6 +256,14 @@ func applyDefaults(r *SearchRequest) {
 	if !r.OpenNowOnly && r.VoiceText == "" {
 		r.OpenNowOnly = true
 	}
+}
+
+func badRequest(message string) *apiSearchError {
+	return &apiSearchError{outcome: "bad_request", status: http.StatusBadRequest, message: message}
+}
+
+func badGateway(prefix string, err error) *apiSearchError {
+	return &apiSearchError{outcome: "upstream_error", status: http.StatusBadGateway, message: fmt.Sprintf("%s: %v", prefix, err)}
 }
 
 // Health is a basic readiness check.
