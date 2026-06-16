@@ -29,25 +29,25 @@ type agentParser interface {
 
 type ruleBasedAgentParser struct{}
 
-func (h *Handler) runAgentSearch(ctx context.Context, req AgentSearchRequest) (AgentSearchResponse, *apiSearchError) {
+func (h *Handler) runAgentSearch(ctx context.Context, req AgentSearchRequest) (AgentSearchResponse, agentPlan, *apiSearchError) {
 	plan := h.agent.Parse(req)
 	if plan.Start == "" {
-		return AgentSearchResponse{}, badRequest("agent needs a start location")
+		return AgentSearchResponse{}, plan, badRequest("agent needs a start location")
 	}
 	if plan.Destination == "" {
-		return AgentSearchResponse{}, badRequest("agent needs a destination")
+		return AgentSearchResponse{}, plan, badRequest("agent needs a destination")
 	}
 	if plan.Preference == "" {
-		return AgentSearchResponse{}, badRequest("agent needs a food preference")
+		return AgentSearchResponse{}, plan, badRequest("agent needs a food preference")
 	}
 
 	origin, err := h.geocodeOne(ctx, plan.Start)
 	if err != nil {
-		return AgentSearchResponse{}, badGateway("start geocoding failed", err)
+		return AgentSearchResponse{}, plan, badGateway("start geocoding failed", err)
 	}
 	destination, err := h.geocodeOne(ctx, plan.Destination)
 	if err != nil {
-		return AgentSearchResponse{}, badGateway("destination geocoding failed", err)
+		return AgentSearchResponse{}, plan, badGateway("destination geocoding failed", err)
 	}
 
 	searchResp, searchErr := h.runSearch(ctx, SearchRequest{
@@ -60,7 +60,7 @@ func (h *Handler) runAgentSearch(ctx context.Context, req AgentSearchRequest) (A
 		OpenNowOnly:      plan.OpenNowOnly,
 	})
 	if searchErr != nil {
-		return AgentSearchResponse{}, searchErr
+		return AgentSearchResponse{}, plan, searchErr
 	}
 
 	restaurants := make([]AgentRestaurant, 0, len(searchResp.Results))
@@ -71,7 +71,7 @@ func (h *Handler) runAgentSearch(ctx context.Context, req AgentSearchRequest) (A
 	return AgentSearchResponse{
 		Summary:     agentSummary(restaurants, plan.Preference),
 		Restaurants: restaurants,
-	}, nil
+	}, plan, nil
 }
 
 func (h *Handler) geocodeOne(ctx context.Context, place string) (geocode.Suggestion, error) {

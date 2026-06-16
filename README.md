@@ -176,6 +176,31 @@ latency, client IP, and request ID:
 }
 ```
 
+## Optional PostgreSQL persistence
+
+RouteBite can store `/v1/agent/search` history in PostgreSQL for demos,
+analytics, and backend portfolio depth. This is disabled by default, so the app
+still runs normally without a database.
+
+Enable it only when you have a database ready:
+
+```bash
+export DB_ENABLED=true
+export DATABASE_URL='postgres://routebite:routebite@localhost:5432/routebite?sslmode=disable'
+psql "$DATABASE_URL" -f migrations/001_create_agent_searches.sql
+go run ./cmd/server
+```
+
+Each successful agent search records the request ID, query, normalized route
+fields, preference, max detour, result count, and driver-safe summary. If the
+save fails, RouteBite logs the error and still returns the recommendation.
+
+Run without PostgreSQL:
+
+```bash
+DB_ENABLED=false go run ./cmd/server
+```
+
 ## Getting started
 
 ```bash

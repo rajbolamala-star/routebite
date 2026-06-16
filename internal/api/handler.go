@@ -13,6 +13,7 @@ import (
 
 	"github.com/dheerajb/routebite/internal/cache"
 	"github.com/dheerajb/routebite/internal/geocode"
+	"github.com/dheerajb/routebite/internal/history"
 	"github.com/dheerajb/routebite/internal/routing"
 	"github.com/dheerajb/routebite/internal/scoring"
 	"github.com/dheerajb/routebite/internal/voice"
@@ -49,10 +50,21 @@ type Handler struct {
 	weights   scoring.Weights
 	providers Providers
 	agent     agentParser
+	history   history.Repository
 }
 
-func NewHandler(y yelp.Client, r routing.Engine, g geocode.Client, c *cache.TTL, providers Providers) *Handler {
-	return &Handler{
+type HandlerOption func(*Handler)
+
+func WithAgentSearchHistory(repo history.Repository) HandlerOption {
+	return func(h *Handler) {
+		if repo != nil {
+			h.history = repo
+		}
+	}
+}
+
+func NewHandler(y yelp.Client, r routing.Engine, g geocode.Client, c *cache.TTL, providers Providers, opts ...HandlerOption) *Handler {
+	h := &Handler{
 		yelp:      y,
 		route:     r,
 		geocode:   g,
@@ -60,7 +72,12 @@ func NewHandler(y yelp.Client, r routing.Engine, g geocode.Client, c *cache.TTL,
 		weights:   scoring.Default,
 		providers: providers,
 		agent:     ruleBasedAgentParser{},
+		history:   history.NoopRepository{},
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // Search handles POST /v1/search.

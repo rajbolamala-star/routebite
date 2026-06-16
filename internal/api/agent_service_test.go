@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/dheerajb/routebite/internal/cache"
 	"github.com/dheerajb/routebite/internal/geocode"
+	"github.com/dheerajb/routebite/internal/history"
 	"github.com/dheerajb/routebite/internal/middleware"
 	"github.com/dheerajb/routebite/internal/routing"
 	"github.com/dheerajb/routebite/internal/yelp"
@@ -181,4 +184,95 @@ func TestAgentSearch_ErrorIncludesRequestID(t *testing.T) {
 	if got.Error.RequestID != "test-request-id" {
 		t.Fatalf("request_id = %q, want test-request-id", got.Error.RequestID)
 	}
+}
+
+func TestAgentSearch_SavesHistory(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &recordingHistoryRepo{}
+	h := NewHandler(
+		yelp.NewMock(),
+		routing.NewMockEngine(),
+		geocode.NewMock(),
+		cache.New(time.Minute),
+		Providers{Restaurants: "mock", Routing: "mock", Geocoding: "mock"},
+		WithAgentSearchHistory(repo),
+	)
+
+	r := gin.New()
+	r.Use(middleware.RequestID())
+	r.POST("/v1/agent/search", h.AgentSearch)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/agent/search", bytes.NewBufferString(`{
+		"query": "I am driving from North Miami Beach to Sunrise and want soup under 10 minutes",
+		"start": "North Miami Beach",
+		"destination": "Sunrise",
+		"preference": "soup",
+		"max_detour_minutes": 10
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(middleware.RequestIDHeader, "history-request-id")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if len(repo.records) != 1 {
+		t.Fatalf("saved records = %d, want 1", len(repo.records))
+	}
+	got := repo.records[0]
+	if got.RequestID != "history-request-id" {
+		t.Fatalf("RequestID = %q, want history-request-id", got.RequestID)
+	}
+	if got.Query == "" || got.StartLocation != "North Miami Beach" || got.Destination != "Sunrise" || got.Preference != "soup" {
+		t.Fatalf("saved record has wrong request fields: %+v", got)
+	}
+	if got.MaxDetourMinutes != 10 {
+		t.Fatalf("MaxDetourMinutes = %d, want 10", got.MaxDetourMinutes)
+	}
+	if got.ResultCount == 0 || got.Summary == "" {
+		t.Fatalf("saved response fields are incomplete: %+v", got)
+	}
+}
+
+func TestAgentSearch_HistoryFailureDoesNotBreakResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewHandler(
+		yelp.NewMock(),
+		routing.NewMockEngine(),
+		geocode.NewMock(),
+		cache.New(time.Minute),
+		Providers{Restaurants: "mock", Routing: "mock", Geocoding: "mock"},
+		WithAgentSearchHistory(&recordingHistoryRepo{err: errors.New("database unavailable")}),
+	)
+
+	body := bytes.NewBufferString(`{
+		"start": "North Miami Beach",
+		"destination": "Sunrise",
+		"preference": "soup",
+		"max_detour_minutes": 10
+	}`)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agent/search", body)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.AgentSearch(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
+type recordingHistoryRepo struct {
+	records []history.AgentSearch
+	err     error
+}
+
+func (r *recordingHistoryRepo) SaveAgentSearch(_ context.Context, search history.AgentSearch) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.records = append(r.records, search)
+	return nil
 }
