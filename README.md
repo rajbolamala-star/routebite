@@ -196,8 +196,34 @@ cost me to stop?
 | `POST` | `/v1/agent/search` | Agent-style natural language or structured route search |
 | `GET`  | `/v1/geocode` | Resolve typed places into coordinates |
 | `GET`  | `/v1/providers` | Show active data providers |
-| `GET`  | `/v1/health` | Health check |
-| `GET`  | `/v1/metrics` | Prometheus metrics |
+| `GET`  | `/health`, `/v1/health` | Liveness check: app process is running |
+| `GET`  | `/ready`, `/v1/ready` | Readiness check: enabled optional dependencies are reachable |
+| `GET`  | `/metrics` | Prometheus metrics |
+
+## Deployment environment variables
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `PORT` | `8080` | HTTP listen port |
+| `GIN_MODE` | `release` | Gin runtime mode |
+| `YELP_API_KEY` | empty | Enables live Yelp restaurants when set |
+| `USE_MOCK_ROUTING` | `false` | Set `true` for stable mock route demos |
+| `USE_MOCK_GEOCODING` | `false` | Set `true` for offline place lookup demos |
+| `DB_ENABLED` | `false` | Enables optional PostgreSQL search history |
+| `DATABASE_URL` | empty | PostgreSQL connection string |
+| `REDIS_ENABLED` | `false` | Enables optional Redis shared cache |
+| `REDIS_ADDR` | `localhost:6379` | Redis host and port |
+| `REDIS_PASSWORD` | empty | Redis password when needed |
+| `REDIS_DB` | `0` | Redis logical database |
+| `CACHE_TTL_MINUTES` | `15` | Shared cache TTL |
+| `OLLAMA_ENABLED` | `false` | Enables optional local Ollama parser |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API base URL |
+| `OLLAMA_MODEL` | `llama3.2:3b` | Ollama model name |
+| `OLLAMA_TIMEOUT_SECONDS` | `5` | Ollama parser timeout |
+
+`/health` only proves the process is alive. `/ready` checks optional
+dependencies when they are enabled. For example, if `REDIS_ENABLED=true` and
+Redis is down, `/ready` returns `503` with the Redis status in the response.
 
 ## Request tracing and logs
 
@@ -335,16 +361,16 @@ invalid JSON, or misses required fields, RouteBite logs the event and uses the
 rule-based parser. The recommendation endpoint should still work even when the
 local LLM is down.
 
-## Getting started
+## Run locally
 
 ```bash
-# 1. Set your Yelp API key (free at https://docs.developer.yelp.com)
-export YELP_API_KEY=your_yelp_fusion_api_key
+# Stable local demo with mock restaurants, routing, and geocoding.
+make run
+```
 
-# 2. Run
-go run ./cmd/server
+In another terminal:
 
-# 3. Try it
+```bash
 curl -X POST http://localhost:8080/v1/search \
   -H "Content-Type: application/json" \
   -d @scripts/example_request.json
@@ -364,12 +390,97 @@ curl -X POST http://localhost:8080/v1/agent/search \
   }'
 ```
 
-Or via Docker:
+Useful local checks:
+
+```bash
+curl http://localhost:8080/health
+curl http://localhost:8080/ready
+curl http://localhost:8080/v1/providers
+```
+
+## Run with Docker
+
+Build and run the API plus PostgreSQL and Redis:
 
 ```bash
 make docker-up
-./scripts/smoke-test.sh
 ```
+
+Then test:
+
+```bash
+./scripts/smoke-test.sh
+curl http://localhost:8080/ready
+```
+
+Stop the stack:
+
+```bash
+make docker-down
+```
+
+The compose stack uses mock routing/geocoding by default for repeatable demos.
+Set `YELP_API_KEY` in your shell before `make docker-up` to use live Yelp data.
+
+## Run with PostgreSQL + Redis
+
+PostgreSQL search history and Redis cache are optional. The Docker stack enables
+both and initializes the `agent_searches` table from `migrations/`.
+
+Manual local setup:
+
+```bash
+docker run --rm --name routebite-postgres \
+  -e POSTGRES_DB=routebite \
+  -e POSTGRES_USER=routebite \
+  -e POSTGRES_PASSWORD=routebite \
+  -p 5432:5432 postgres:16-alpine
+```
+
+In another terminal:
+
+```bash
+export DATABASE_URL='postgres://routebite:routebite@localhost:5432/routebite?sslmode=disable'
+psql "$DATABASE_URL" -f migrations/001_create_agent_searches.sql
+
+docker run --rm --name routebite-redis -p 6379:6379 redis:7-alpine
+```
+
+Run the API with both enabled:
+
+```bash
+DB_ENABLED=true \
+DATABASE_URL="$DATABASE_URL" \
+REDIS_ENABLED=true \
+REDIS_ADDR=localhost:6379 \
+go run ./cmd/server
+```
+
+Caching is failure-safe. If Redis is unavailable during a request, RouteBite
+logs `cache_error`, calls the real provider, and continues.
+
+## Run with Ollama optional parser
+
+The rule-based parser is the default. Ollama is optional and always falls back
+to the rule-based parser on timeout, invalid JSON, or missing fields.
+
+```bash
+ollama serve
+ollama pull llama3.2:3b
+```
+
+Run RouteBite with Ollama parsing enabled:
+
+```bash
+OLLAMA_ENABLED=true \
+OLLAMA_BASE_URL=http://localhost:11434 \
+OLLAMA_MODEL=llama3.2:3b \
+go run ./cmd/server
+```
+
+If Ollama is enabled but not reachable, `/ready` reports `not_ready`. The agent
+endpoint still falls back so a recommendation request does not fail only because
+the local LLM is down.
 
 ## Web app
 
@@ -448,6 +559,7 @@ Health and provider checks:
 
 ```text
 https://routebite.fly.dev/v1/health
+https://routebite.fly.dev/v1/ready
 https://routebite.fly.dev/v1/providers
 ```
 
@@ -466,6 +578,63 @@ Environment Variable: ROUTEBITE_API_BASE=https://routebite.fly.dev
 
 The frontend keeps calling `/v1/*`; Next.js rewrites those requests to the Fly
 backend using `ROUTEBITE_API_BASE`.
+
+## Demo curl commands
+
+Agent recommendation:
+
+```bash
+curl -i -X POST http://localhost:8080/v1/agent/search \
+  -H "Content-Type: application/json" \
+  -H "X-Request-ID: demo-routebite-001" \
+  -d '{
+    "query": "I am driving from Kingsport TN to Nashville TN and want Indian food with less than 10 minutes detour",
+    "start": "Kingsport, TN",
+    "destination": "Nashville, TN",
+    "preference": "Indian food",
+    "max_detour_minutes": 10
+  }'
+```
+
+Readiness:
+
+```bash
+curl -i http://localhost:8080/ready
+```
+
+Redis cache hit demo:
+
+```bash
+# Run the same request twice while REDIS_ENABLED=true.
+# First request should log cache_miss, second request should log cache_hit.
+curl -X POST http://localhost:8080/v1/agent/search \
+  -H "Content-Type: application/json" \
+  -d '{"start":"Kingsport, TN","destination":"Nashville, TN","preference":"soup","max_detour_minutes":10}'
+curl -X POST http://localhost:8080/v1/agent/search \
+  -H "Content-Type: application/json" \
+  -d '{"start":"Kingsport, TN","destination":"Nashville, TN","preference":"soup","max_detour_minutes":10}'
+```
+
+## Demo Script
+
+Problem: RouteBite helps drivers choose one good food stop on a trip without
+switching between maps, restaurant apps, reviews, and phone calls while driving.
+
+Call the agent endpoint with a sentence like “I am driving from Kingsport TN to
+Nashville TN and want Indian food with less than 10 minutes detour.” Point out
+that the response includes:
+
+- `driver_safe_summary`: a short sentence a voice assistant could read aloud
+- `best_pick`: the highest scoring recommendation
+- `routebite_score` and `score_breakdown`: explainable decision logic
+- `match_quality`: whether the app found a strong match or only a weak/no match
+- `tap_to_call` and `open_in_maps_url`: driver-friendly next actions
+- `request_id`: correlation between client response and server logs
+
+To show request tracing, send `X-Request-ID: demo-routebite-001` in curl and
+then point to the matching JSON log line from the server. To show Redis, run
+the same request twice with `REDIS_ENABLED=true` and point out the `cache_miss`
+followed by `cache_hit` log event.
 
 ## What this project demonstrates
 

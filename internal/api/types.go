@@ -46,3 +46,18 @@ type Providers struct {
 	Routing     string `json:"routing"`
 	Geocoding   string `json:"geocoding"`
 }
+
+// DependencyStatus describes whether an optional deployment dependency is
+// configured and reachable.
+type DependencyStatus struct {
+	Enabled bool   `json:"enabled"`
+	Ready   bool   `json:"ready"`
+	Message string `json:"message,omitempty"`
+}
+
+// Readiness describes the runtime dependencies checked by /ready.
+type Readiness struct {
+	Postgres DependencyStatus `json:"postgres"`
+	Redis    DependencyStatus `json:"redis"`
+	Ollama   DependencyStatus `json:"ollama"`
+}

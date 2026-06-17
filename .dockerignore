@@ -1,11 +1,16 @@
 bin/
 .gocache/
+.pytest_cache/
+coverage.out
+tmp/
 web/.next/
 web/node_modules/
 web/tsconfig.tsbuildinfo
+web/out/
 *.exe
 .env
 .env.local
+.env.*.local
 .idea/
 .vscode/
 *.swp
