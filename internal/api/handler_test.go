@@ -47,6 +47,68 @@ func TestProviders(t *testing.T) {
 	}
 }
 
+func TestReady_AllDisabledOptionalDependencies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	h := NewHandler(
+		yelp.NewMock(),
+		routing.NewMockEngine(),
+		geocode.NewMock(),
+		cache.New(time.Minute),
+		Providers{Restaurants: "mock", Routing: "mock", Geocoding: "mock"},
+	)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/ready", nil)
+
+	h.Ready(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestReady_EnabledDependencyNotReady(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	h := NewHandler(
+		yelp.NewMock(),
+		routing.NewMockEngine(),
+		geocode.NewMock(),
+		cache.New(time.Minute),
+		Providers{Restaurants: "mock", Routing: "mock", Geocoding: "mock"},
+		WithReadiness(Readiness{
+			Postgres: DependencyStatus{Enabled: true, Ready: false, Message: "postgres ping failed"},
+			Redis:    DependencyStatus{Enabled: false, Ready: true},
+			Ollama:   DependencyStatus{Enabled: false, Ready: true},
+		}),
+	)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/ready", nil)
+
+	h.Ready(c)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d, body = %s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	}
+	var got struct {
+		Status       string    `json:"status"`
+		Dependencies Readiness `json:"dependencies"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Status != "not_ready" {
+		t.Fatalf("status body = %q, want not_ready", got.Status)
+	}
+	if got.Dependencies.Postgres.Message == "" {
+		t.Fatalf("postgres readiness message is empty")
+	}
+}
+
 func TestGeocode_UsesExternalCacheHit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	fakeGeocode := &countingGeocodeClient{}

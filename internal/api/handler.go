@@ -54,6 +54,7 @@ type Handler struct {
 	providers Providers
 	agent     agentParser
 	history   history.Repository
+	readiness Readiness
 }
 
 type HandlerOption func(*Handler)
@@ -85,6 +86,12 @@ func WithAgentParser(parser agentParser) HandlerOption {
 	}
 }
 
+func WithReadiness(readiness Readiness) HandlerOption {
+	return func(h *Handler) {
+		h.readiness = readiness
+	}
+}
+
 func NewHandler(y yelp.Client, r routing.Engine, g geocode.Client, c *cache.TTL, providers Providers, opts ...HandlerOption) *Handler {
 	h := &Handler{
 		yelp:      y,
@@ -97,6 +104,11 @@ func NewHandler(y yelp.Client, r routing.Engine, g geocode.Client, c *cache.TTL,
 		providers: providers,
 		agent:     ruleBasedAgentParser{},
 		history:   history.NoopRepository{},
+		readiness: Readiness{
+			Postgres: DependencyStatus{Ready: true},
+			Redis:    DependencyStatus{Ready: true},
+			Ollama:   DependencyStatus{Ready: true},
+		},
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -370,7 +382,27 @@ func badGateway(prefix string, err error) *apiSearchError {
 	return &apiSearchError{outcome: "upstream_error", status: http.StatusBadGateway, message: fmt.Sprintf("%s: %v", prefix, err)}
 }
 
-// Health is a basic readiness check.
+// Health confirms the app process is running.
 func (h *Handler) Health(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "time": time.Now().UTC()})
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "routebite", "time": time.Now().UTC()})
+}
+
+// Ready confirms enabled optional dependencies are reachable.
+func (h *Handler) Ready(c *gin.Context) {
+	status := http.StatusOK
+	bodyStatus := "ready"
+	if !dependencyReady(h.readiness.Postgres) || !dependencyReady(h.readiness.Redis) || !dependencyReady(h.readiness.Ollama) {
+		status = http.StatusServiceUnavailable
+		bodyStatus = "not_ready"
+	}
+
+	c.JSON(status, gin.H{
+		"status":       bodyStatus,
+		"time":         time.Now().UTC(),
+		"dependencies": h.readiness,
+	})
+}
+
+func dependencyReady(status DependencyStatus) bool {
+	return !status.Enabled || status.Ready
 }

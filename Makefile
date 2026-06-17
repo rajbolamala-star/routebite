@@ -50,10 +50,10 @@ web-typecheck:
 	cd web && npm run typecheck
 
 docker-up:
-	cd deploy/docker && docker-compose up --build
+	docker compose -f deploy/docker/docker-compose.yml up --build
 
 docker-down:
-	cd deploy/docker && docker-compose down
+	docker compose -f deploy/docker/docker-compose.yml down
 
 deploy:
 	fly deploy

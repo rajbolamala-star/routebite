@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   routebite:
     build:
@@ -8,7 +6,59 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - PORT=8080
-      - YELP_API_KEY=${YELP_API_KEY:-}
-      - USE_MOCK_ROUTING=${USE_MOCK_ROUTING:-true}
-      - USE_MOCK_GEOCODING=${USE_MOCK_GEOCODING:-true}
+      PORT: 8080
+      GIN_MODE: release
+      YELP_API_KEY: ${YELP_API_KEY:-}
+      USE_MOCK_ROUTING: ${USE_MOCK_ROUTING:-true}
+      USE_MOCK_GEOCODING: ${USE_MOCK_GEOCODING:-true}
+      DB_ENABLED: ${DB_ENABLED:-true}
+      DATABASE_URL: postgres://routebite:routebite@postgres:5432/routebite?sslmode=disable
+      REDIS_ENABLED: ${REDIS_ENABLED:-true}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      CACHE_TTL_MINUTES: ${CACHE_TTL_MINUTES:-15}
+      OLLAMA_ENABLED: ${OLLAMA_ENABLED:-false}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-5}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: routebite
+      POSTGRES_USER: routebite
+      POSTGRES_PASSWORD: routebite
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../../migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U routebite -d routebite"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:

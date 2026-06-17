@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -70,18 +71,27 @@ func main() {
 	c := cache.New(cacheTTL)
 	go purgeLoop(c)
 
-	historyRepo, closeHistoryRepo := openHistoryRepository()
+	historyRepo, postgresStatus, closeHistoryRepo := openHistoryRepository()
 	defer closeHistoryRepo()
 
-	externalCache, closeExternalCache := openExternalCache()
+	externalCache, redisStatus, closeExternalCache := openExternalCache()
 	defer closeExternalCache()
-	agentParserOption := openAgentParserOption()
+	agentParserOption, ollamaStatus := openAgentParserOption()
 
 	h := api.NewHandler(yelpClient, routeEngine, geocodeClient, c, api.Providers{
 		Restaurants: restaurantProvider,
 		Routing:     routingProvider,
 		Geocoding:   geocodingProvider,
-	}, api.WithAgentSearchHistory(historyRepo), api.WithExternalCache(externalCache, cacheTTL), agentParserOption)
+	},
+		api.WithAgentSearchHistory(historyRepo),
+		api.WithExternalCache(externalCache, cacheTTL),
+		agentParserOption,
+		api.WithReadiness(api.Readiness{
+			Postgres: postgresStatus,
+			Redis:    redisStatus,
+			Ollama:   ollamaStatus,
+		}),
+	)
 
 	gin.SetMode(getEnv("GIN_MODE", "release"))
 	r := gin.New()
@@ -99,8 +109,10 @@ func main() {
 		v1.GET("/geocode", h.Geocode)
 		v1.GET("/providers", h.Providers)
 		v1.GET("/health", h.Health)
+		v1.GET("/ready", h.Ready)
 	}
 	r.GET("/health", h.Health) // also at root for load balancers
+	r.GET("/ready", h.Ready)
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	srv := &http.Server{
@@ -152,22 +164,30 @@ func readCacheTTL() time.Duration {
 	return time.Duration(minutes) * time.Minute
 }
 
-func openHistoryRepository() (history.Repository, func()) {
+func openHistoryRepository() (history.Repository, api.DependencyStatus, func()) {
 	if os.Getenv("DB_ENABLED") != "true" {
 		log.Println("agent search persistence: disabled (DB_ENABLED=false)")
-		return history.NoopRepository{}, func() {}
+		return history.NoopRepository{}, api.DependencyStatus{Enabled: false, Ready: true}, func() {}
 	}
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		log.Println("agent search persistence: disabled (DATABASE_URL not set)")
-		return history.NoopRepository{}, func() {}
+		return history.NoopRepository{}, api.DependencyStatus{
+			Enabled: true,
+			Ready:   false,
+			Message: "DATABASE_URL is not set",
+		}, func() {}
 	}
 
 	db, err := sql.Open("postgres", databaseURL)
 	if err != nil {
 		log.Printf("agent search persistence: disabled (open failed: %v)", err)
-		return history.NoopRepository{}, func() {}
+		return history.NoopRepository{}, api.DependencyStatus{
+			Enabled: true,
+			Ready:   false,
+			Message: "postgres open failed",
+		}, func() {}
 	}
 	db.SetMaxOpenConns(5)
 	db.SetMaxIdleConns(5)
@@ -178,19 +198,23 @@ func openHistoryRepository() (history.Repository, func()) {
 	if err := db.PingContext(ctx); err != nil {
 		log.Printf("agent search persistence: disabled (ping failed: %v)", err)
 		_ = db.Close()
-		return history.NoopRepository{}, func() {}
+		return history.NoopRepository{}, api.DependencyStatus{
+			Enabled: true,
+			Ready:   false,
+			Message: "postgres ping failed",
+		}, func() {}
 	}
 
 	log.Println("agent search persistence: postgres")
-	return history.NewPostgresRepository(db), func() {
+	return history.NewPostgresRepository(db), api.DependencyStatus{Enabled: true, Ready: true}, func() {
 		_ = db.Close()
 	}
 }
 
-func openExternalCache() (cache.Cache, func()) {
+func openExternalCache() (cache.Cache, api.DependencyStatus, func()) {
 	if os.Getenv("REDIS_ENABLED") != "true" {
 		log.Println("redis cache: disabled (REDIS_ENABLED=false)")
-		return cache.NoopCache{}, func() {}
+		return cache.NoopCache{}, api.DependencyStatus{Enabled: false, Ready: true}, func() {}
 	}
 
 	db, err := strconv.Atoi(getEnv("REDIS_DB", "0"))
@@ -208,19 +232,23 @@ func openExternalCache() (cache.Cache, func()) {
 	if err := client.Ping(ctx).Err(); err != nil {
 		log.Printf("redis cache: disabled (ping failed: %v)", err)
 		_ = client.Close()
-		return cache.NoopCache{}, func() {}
+		return cache.NoopCache{}, api.DependencyStatus{
+			Enabled: true,
+			Ready:   false,
+			Message: "redis ping failed",
+		}, func() {}
 	}
 
 	log.Println("redis cache: enabled")
-	return cache.NewRedisCache(client), func() {
+	return cache.NewRedisCache(client), api.DependencyStatus{Enabled: true, Ready: true}, func() {
 		_ = client.Close()
 	}
 }
 
-func openAgentParserOption() api.HandlerOption {
+func openAgentParserOption() (api.HandlerOption, api.DependencyStatus) {
 	if os.Getenv("OLLAMA_ENABLED") != "true" {
 		log.Println("agent parser: rule-based (OLLAMA_ENABLED=false)")
-		return func(*api.Handler) {}
+		return func(*api.Handler) {}, api.DependencyStatus{Enabled: false, Ready: true}
 	}
 
 	timeoutSeconds, err := strconv.Atoi(getEnv("OLLAMA_TIMEOUT_SECONDS", "5"))
@@ -232,9 +260,38 @@ func openAgentParserOption() api.HandlerOption {
 		getEnv("OLLAMA_MODEL", "llama3.2:3b"),
 		getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
 	)
+	status := checkOllamaReady(getEnv("OLLAMA_BASE_URL", "http://localhost:11434"), time.Duration(timeoutSeconds)*time.Second)
 	return api.WithAgentParser(api.NewOllamaAgentParser(api.OllamaParserConfig{
 		BaseURL: getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
 		Model:   getEnv("OLLAMA_MODEL", "llama3.2:3b"),
 		Timeout: time.Duration(timeoutSeconds) * time.Second,
-	}, nil))
+	}, nil)), status
+}
+
+func checkOllamaReady(baseURL string, timeout time.Duration) api.DependencyStatus {
+	baseURL = strings.TrimRight(baseURL, "/")
+	if baseURL == "" {
+		return api.DependencyStatus{Enabled: true, Ready: false, Message: "OLLAMA_BASE_URL is not set"}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/tags", nil)
+	if err != nil {
+		log.Printf("ollama readiness: request failed: %v", err)
+		return api.DependencyStatus{Enabled: true, Ready: false, Message: "ollama readiness request failed"}
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("ollama readiness: unavailable: %v", err)
+		return api.DependencyStatus{Enabled: true, Ready: false, Message: "ollama unavailable"}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Printf("ollama readiness: returned %s", resp.Status)
+		return api.DependencyStatus{Enabled: true, Ready: false, Message: "ollama returned non-2xx status"}
+	}
+	return api.DependencyStatus{Enabled: true, Ready: true}
 }
